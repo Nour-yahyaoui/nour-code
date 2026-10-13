@@ -543,7 +543,7 @@ async def _check_dependency_cves(
 
     outcome = await tools.call(
         "run_shell",
-        command="npm audit --json --no-fund --no-audit" if False else "npm audit --json",
+        command="npm audit --json",
         cwd=str(project_dir),
         timeout_seconds=max(10, min(int(timeout_seconds), 600)),
     )
