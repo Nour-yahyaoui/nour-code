@@ -172,12 +172,29 @@ async def run_shell(args: RunShellArgs, ctx: ToolContext) -> ToolResult:
         "stderr": stderr,
         "truncated": out_truncated or err_truncated,
     }
+    # Non-zero exits and timeouts still carry the structured payload so that
+    # callers (e.g. skills parsing `npm audit --json`) keep the output.
     if timed_out:
-        return ToolResult.failure(
-            f"command timed out after {timeout}s (exit_code={exit_code})", **payload
+        return ToolResult(
+            ok=False,
+            status="error",
+            output=payload,
+            error=f"command timed out after {timeout}s (exit_code={exit_code})",
+            metadata=payload,
         )
     if exit_code != 0:
-        return ToolResult.failure(f"command exited with {exit_code}", **payload)
+        detail = f"command exited with {exit_code}"
+        if stderr.strip():
+            detail += f"\nstderr:\n{stderr.strip()[-2000:]}"
+        if stdout.strip():
+            detail += f"\nstdout:\n{stdout.strip()[-2000:]}"
+        return ToolResult(
+            ok=False,
+            status="error",
+            output=payload,
+            error=detail,
+            metadata=payload,
+        )
     return ToolResult.success(payload, exit_code=exit_code, cwd=str(cwd))
 
 
