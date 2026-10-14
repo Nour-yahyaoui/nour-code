@@ -79,6 +79,20 @@ SIGNAL_PATTERNS: dict[str, re.Pattern[str]] = {
 
 PRODUCTION_FILE_ARGS = ("path", "file_path", "target", "source")
 
+#: Tools whose success changes a file on disk (used for ``file_change`` events).
+FILE_MUTATING_TOOLS = frozenset({"write_file", "apply_patch", "delete_file"})
+
+
+def _first_path(arguments: dict[str, Any] | None) -> str | None:
+    """Best-effort target path of a filesystem tool call."""
+    if not isinstance(arguments, dict):
+        return None
+    for key in PRODUCTION_FILE_ARGS:
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
 
 @dataclass
 class TurnState:
@@ -145,7 +159,7 @@ class Agent:
             extra={"session": session},
         )
 
-    def _system_message(self, session: Session, production_mode: bool) -> ChatMessage:
+    def _system_message(self, session: Session, production_mode: bool, extra: str | None = None) -> ChatMessage:
         listing = self._shallow_listing(session.working_dir)
         prompt = build_system_prompt(
             cwd=str(session.working_dir),
@@ -154,6 +168,7 @@ class Agent:
             permissions=self.permissions.describe(),
             tools=self.registry.describe(),
             production_mode=production_mode,
+            extra_context=extra,
         )
         return ChatMessage.system(prompt)
 
@@ -273,6 +288,28 @@ class Agent:
                             )
                         )
                     session.add(ChatMessage.tool_result(call_id, name, rendered))
+
+            if emit is not None and result.status == "ok" and name in FILE_MUTATING_TOOLS:
+                target = _first_path(arguments)
+                if target:
+                    try:
+                        resolved = self.permissions.resolve_path(target, kind="any")
+                    except PermissionDeniedError:
+                        resolved = None
+                    if resolved is not None:
+                        action = "deleted" if name == "delete_file" else ("created" if not resolved.exists() else "modified")
+                        await emit(
+                            StreamEvent(
+                                type="file_change",
+                                data={
+                                    "tool": name,
+                                    "path": str(resolved),
+                                    "action": action,
+                                    "iteration": iteration,
+                                    "call_id": call_id,
+                                },
+                            )
+                        )
                     continue
 
             if parse_error is not None:
@@ -753,7 +790,7 @@ class Agent:
         self.approvals.create(session.session_id, emit=emit)
 
         session.add(ChatMessage.user(user_message))
-        system = self._system_message(session, production)
+        system = self._system_message(session, production, extra=system_extra)
         ctx = self._tool_context(session, emit, audit=audit)
         await self._emit_skill_events(session, emit)
         async for event in self._drain(queue):
@@ -779,6 +816,18 @@ class Agent:
                         )
                     if thought:
                         state.thinking_parts.append(thought)
+                    await emit(
+                        StreamEvent(
+                            type="usage",
+                            data={
+                                "iteration": iteration,
+                                "prompt_tokens": _usage.prompt_tokens,
+                                "completion_tokens": _usage.completion_tokens,
+                                "total_tokens": _usage.total_tokens,
+                                "elapsed_ms": round(state.duration_ms, 2),
+                            },
+                        )
+                    )
 
                     if calls:
                         session.add(ChatMessage.assistant(content or None, calls))
@@ -899,6 +948,12 @@ class Agent:
         production_mode: bool | None = None,
         audit: Any = None,
         approval_mode: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+        enable_thinking: bool | None = None,
+        tools: list[str] | None = None,
+        system_extra: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream the turn as SSE events (tokens arrive as the model emits them)."""
         async for event in self._turn(
@@ -909,6 +964,12 @@ class Agent:
             audit=audit,
             stream=True,
             approval_mode=approval_mode,
+            model=model,
+            temperature=temperature,
+            seed=seed,
+            enable_thinking=enable_thinking,
+            tools=tools,
+            system_extra=system_extra,
         ):
             yield event
 
@@ -921,6 +982,12 @@ class Agent:
         production_mode: bool | None = None,
         audit: Any = None,
         approval_mode: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+        enable_thinking: bool | None = None,
+        tools: list[str] | None = None,
+        system_extra: str | None = None,
     ) -> ChatResponse:
         """Run the turn to completion and return the whole response."""
         fallback = ChatResponse(session_id=session.session_id, content="", finished=False, finish_reason="error")
@@ -932,6 +999,12 @@ class Agent:
             audit=audit,
             stream=False,
             approval_mode=approval_mode,
+            model=model,
+            temperature=temperature,
+            seed=seed,
+            enable_thinking=enable_thinking,
+            tools=tools,
+            system_extra=system_extra,
         ):
             if event.type == "done":
                 return ChatResponse.model_validate(event.data["response"])
