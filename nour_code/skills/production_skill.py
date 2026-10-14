@@ -486,7 +486,7 @@ def _py_import_insert_index(tree: ast.Module) -> int:
             index = body[0].end_lineno or 0
     last_import = None
     for node in body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+        if isinstance(node, ast.Import | ast.ImportFrom):
             last_import = node
         elif isinstance(node, ast.Expr) and isinstance(getattr(node, "value", None), ast.Constant):
             continue  # stray docstring / string literal
@@ -568,7 +568,7 @@ def _py_is_risky(node: ast.AST) -> bool:
 
 
 def _py_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-    return [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    return [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)]
 
 
 def _py_annotation_name(annotation: ast.AST | None) -> str | None:

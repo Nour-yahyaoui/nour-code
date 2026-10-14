@@ -63,6 +63,7 @@ ignore = [
   "B008",   # FastAPI dependency injection uses function calls in defaults
   "E501",   # long lines are handled by the formatter / intentional in prompts
   "SIM108", # explicit ternaries read better in the tool handlers
+  "SIM102", # guarded nested conditions read better than long boolean chains
 ]
 
 [tool.ruff.lint.per-file-ignores]

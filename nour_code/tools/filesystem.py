@@ -13,6 +13,7 @@ All filesystem access goes through :mod:`pathlib` / :class:`anyio.Path` — neve
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import stat
@@ -225,10 +226,8 @@ async def _atomic_write(path: Path, content: str, encoding: str) -> None:
                 os.fsync(handle.fileno())
             os.replace(tmp_path, path)
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
             raise
 
     await anyio.to_thread.run_sync(_sync)
@@ -410,10 +409,8 @@ async def _rmtree(path: Path) -> int:
             except OSError:
                 continue
             removed += 1
-    try:
+    with contextlib.suppress(OSError):  # already gone
         await directory.rmdir()
-    except OSError:  # pragma: no cover - already gone
-        pass
     return removed
 
 

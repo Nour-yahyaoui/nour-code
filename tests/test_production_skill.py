@@ -204,7 +204,7 @@ async def test_add_input_validation_skips_self(container, sandbox: Path) -> None
         "    def find(self, user_id: int):\n"
         "        return user_id\n"
     )
-    result = await invoke(container, "add_input_validation", file_path=str(target))
+    await invoke(container, "add_input_validation", file_path=str(target))
     content = target.read_text()
     assert "if not isinstance(user_id, int):" in content
     assert "isinstance(self" not in content

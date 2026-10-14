@@ -167,7 +167,7 @@ class PermissionManager:
         self.working_dir = working_dir
         self.source = source
         self.warnings: list[str] = list(warnings or [])
-        self.roots: list[Path] = [p for p in self._resolve_roots(working_dir)]
+        self.roots: list[Path] = list(self._resolve_roots(working_dir))
         self._denied: list[re.Pattern[str]] = [
             re.compile(p, re.IGNORECASE) for p in self.config.shell.denied_patterns
         ]

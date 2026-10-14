@@ -15,6 +15,7 @@ Three artefacts are produced:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -77,10 +78,8 @@ def setup_logging(settings: Settings) -> logging.Logger:
     root.setLevel(logging.DEBUG)
     for handler in list(root.handlers):
         root.removeHandler(handler)
-        try:
+        with contextlib.suppress(Exception):  # defensive: handler already closed
             handler.close()
-        except Exception:  # pragma: no cover - defensive
-            pass
 
     file_handler = logging.handlers.RotatingFileHandler(
         settings.app_log_file,
@@ -131,10 +130,9 @@ class AuditLog:
     # -- writes ------------------------------------------------------------
     def _write_sync(self, entry: dict[str, Any]) -> None:
         line = json.dumps(entry, ensure_ascii=False, default=str) + "\n"
-        with self._lock:
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(line)
-                handle.flush()
+        with self._lock, self.path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
 
     async def write(self, entry: dict[str, Any]) -> None:
         if not self.enabled:

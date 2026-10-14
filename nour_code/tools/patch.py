@@ -16,6 +16,7 @@ the allowed roots, and an optional timestamped backup is kept under
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import shutil
 import tempfile
@@ -405,10 +406,8 @@ async def apply_patch(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
     except Exception as exc:  # noqa: BLE001 - surfaced to the model as a tool error
         return ToolResult.failure(f"apply_patch failed with {exc.__class__.__name__}: {exc}", notes=notes)
     finally:
-        try:
+        with contextlib.suppress(OSError):
             diff_file.unlink(missing_ok=True)
-        except OSError:  # pragma: no cover
-            pass
 
     if not success:
         return ToolResult.failure(

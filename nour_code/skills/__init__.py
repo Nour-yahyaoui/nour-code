@@ -99,7 +99,7 @@ class SkillsManager:
     # -- discovery ---------------------------------------------------------
     @property
     def directories(self) -> list[Path]:
-        return [d for d in self.settings.skill_directories]
+        return list(self.settings.skill_directories)
 
     def discover_files(self) -> list[Path]:
         """All candidate skill files, de-duplicated, in directory priority order."""
@@ -206,7 +206,7 @@ class SkillsManager:
         if not isinstance(description, str):
             description = str(description)
         triggers = getattr(module, "SKILL_TRIGGERS", []) or []
-        if not isinstance(triggers, (list, tuple)):
+        if not isinstance(triggers, list | tuple):
             raise SkillLoadError("SKILL_TRIGGERS must be a list of strings")
         triggers = [str(t) for t in triggers]
         handler = getattr(module, "handle", None)
@@ -216,7 +216,7 @@ class SkillsManager:
             raise SkillLoadError("`handle` must be async (async def handle(...))")
 
         raw_tools = getattr(module, "SKILL_TOOLS", []) or []
-        if not isinstance(raw_tools, (list, tuple)):
+        if not isinstance(raw_tools, list | tuple):
             raise SkillLoadError("SKILL_TOOLS must be a list of tool schemas")
         try:
             tools = [self._normalise_tool(item, name) for item in raw_tools]

@@ -10,6 +10,7 @@ dropped by a background sweeper.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -142,10 +143,8 @@ class SessionStore:
     async def stop(self) -> None:
         if self._sweeper is not None:
             self._sweeper.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._sweeper
-            except asyncio.CancelledError:
-                pass
             self._sweeper = None
         await self.persist()
 

@@ -203,7 +203,7 @@ class OllamaClient:
                 return data
             except Exception as exc:  # narrowed immediately below
                 last = self._to_error(exc, endpoint=url)
-                if isinstance(last, (OllamaHTTPError, OllamaResponseError)):
+                if isinstance(last, OllamaHTTPError | OllamaResponseError):
                     if self.metrics:
                         self.metrics.observe_model(
                             model=self.settings.model,
