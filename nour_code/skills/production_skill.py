@@ -998,8 +998,22 @@ def _py_function_args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tupl
     return pairs
 
 
-def _py_has_raise(node: ast.AST) -> bool:
-    return any(isinstance(child, ast.Raise) for child in ast.walk(node))
+def _py_validates_args(node: ast.AST) -> bool:
+    """True when the function already type-checks or null-checks its inputs.
+
+    A bare ``raise`` (for example the re-raise added by ``add_error_handling``)
+    does not count: only real argument validation does, so the two tools
+    compose instead of cancelling each other out.
+    """
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            if child.func.id == "isinstance":
+                return True
+        if isinstance(child, ast.Raise) and isinstance(child.exc, ast.Call):
+            exc_func = child.exc.func
+            if isinstance(exc_func, ast.Name) and exc_func.id in {"ValueError", "TypeError"}:
+                return True
+    return False
 
 
 async def _add_input_validation_python(ctx: dict[str, Any], path: Path, source: str, dry_run: bool) -> dict[str, Any]:
@@ -1013,7 +1027,7 @@ async def _add_input_validation_python(ctx: dict[str, Any], path: Path, source: 
     validated: dict[str, list[str]] = {}
 
     for node in _py_functions(tree):
-        if _py_has_raise(node):
+        if _py_validates_args(node):
             continue
         statements = _py_body_statements(node)
         if not statements:
