@@ -689,7 +689,7 @@ nour-code/
 │   ├── observability.py     # JSON logs, audit trail, Prometheus metrics
 │   ├── config.py            # NOUR_CODE_* settings
 │   └── version_check.py     # Python 3.11 guard
-├── tests/                   # 163 tests, no network required
+├── tests/                   # 265 tests, no network required
 ├── permissions.yaml
 ├── requirements.txt         # pinned versions
 ├── requirements-dev.txt
