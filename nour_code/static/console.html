@@ -136,6 +136,48 @@
   label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
   .hint { color: var(--muted); font-size: 11px; }
 
+  /* ---------- thinking ---------- */
+  details.thinking {
+    margin: 6px 0 10px 12px; border-left: 3px solid var(--skill);
+    background: var(--panel); border-radius: 0 8px 8px 0; padding: 6px 10px;
+  }
+  details.thinking > summary {
+    cursor: pointer; color: var(--skill); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .08em; list-style: none;
+  }
+  details.thinking > summary::-webkit-details-marker { display: none; }
+  details.thinking > summary::before { content: "▸ "; }
+  details.thinking[open] > summary::before { content: "▾ "; }
+  .thinking-body {
+    white-space: pre-wrap; color: var(--muted); font-size: 12px;
+    max-height: 260px; overflow: auto; margin-top: 4px;
+  }
+
+  /* ---------- proposals ---------- */
+  .proposal {
+    margin: 10px 0 10px 12px; border: 1px solid var(--warn); border-radius: 8px;
+    background: var(--panel); padding: 8px 10px;
+  }
+  .proposal.risk-high { border-color: var(--bad); }
+  .proposal.risk-medium { border-color: var(--warn); }
+  .proposal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .proposal .actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  button.approve { background: var(--ok); color: #04170a; }
+  button.approve:hover { filter: brightness(1.1); }
+  button.reject { background: transparent; color: var(--bad); border: 1px solid var(--bad); }
+  button.reject:hover { background: rgba(248, 81, 73, .12); }
+  .pill.warn { color: var(--warn); border-color: #7d5c1a; }
+  .pill.live { color: var(--skill); border-color: #5b3ba8; }
+
+  /* ---------- files ---------- */
+  #filesView { flex: 1 1 auto; padding: 8px 12px; }
+  #filesView .file { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 1px 0; }
+  #filesView .file .name { color: var(--fg); cursor: pointer; }
+  #filesView .file.dir .name { color: var(--accent); }
+  #filesView .file.fresh .name { color: var(--ok); font-weight: 700; }
+  #filesView .file .meta { color: var(--muted); font-size: 11px; }
+  #filesView .path-head { color: var(--muted); font-size: 11px; margin-bottom: 6px; word-break: break-all; }
+
   /* ---------- console ---------- */
   .tabs {
     display: flex; align-items: center; gap: 6px; padding: 6px 10px;
@@ -162,6 +204,11 @@
   .ev .kind { flex: 0 0 76px; text-transform: uppercase; font-size: 10px; letter-spacing: .06em; padding-top: 2px; }
   .ev .msg { flex: 1 1 auto; color: var(--fg); }
   .ev.k-token .kind, .ev.k-token .msg { color: var(--muted); }
+  .ev.k-thinking .kind, .ev.k-thinking .msg { color: var(--skill); font-style: italic; }
+  .ev.k-tool_proposal .kind, .ev.k-tool_proposal .msg { color: var(--warn); }
+  .ev.k-usage .kind, .ev.k-usage .msg { color: var(--muted); }
+  .ev.k-verification .kind, .ev.k-verification .msg { color: var(--accent); }
+  .ev.k-file_change .kind, .ev.k-file_change .msg { color: var(--ok); }
   .ev.k-tool_call .kind, .ev.k-tool_call .msg { color: var(--warn); }
   .ev.k-tool_result .kind, .ev.k-tool_result .msg { color: var(--ok); }
   .ev.k-tool_result.st-bad .kind, .ev.k-tool_result.st-bad .msg { color: var(--bad); }
@@ -196,6 +243,9 @@
   <span id="skills" class="badge">skills: –</span>
   <span class="spacer"></span>
   <span id="stats" class="badge mono">0 events · 0 tools · 0.0s</span>
+  <label class="inline" title="Show the model's reasoning (Qwen3 thinking mode)">
+    <input type="checkbox" id="showThinking" checked /> thinking
+  </label>
   <button id="newSession" class="ghost">new session</button>
 </header>
 
@@ -228,6 +278,7 @@
       <button class="tab active" data-tab="events">events</button>
       <button class="tab" data-tab="timeline">timeline</button>
       <button class="tab" data-tab="skills">skills &amp; tools</button>
+      <button class="tab" data-tab="files">files</button>
       <span class="spacer"></span>
       <input id="filter" placeholder="filter: text or type:tool_call" />
       <label class="inline"><input type="checkbox" id="follow" checked /> follow</label>
@@ -237,6 +288,7 @@
     <div id="eventsView" class="tabview scroll"></div>
     <div id="timelineView" class="tabview scroll hidden"></div>
     <div id="skillsView" class="tabview scroll hidden"></div>
+    <div id="filesView" class="tabview scroll hidden"></div>
     <div id="hGutter" class="gutter horizontal" role="separator" aria-orientation="horizontal" title="drag to resize"></div>
     <div id="inspector">
       <div class="inspector-head"><span>event detail</span><span class="spacer"></span><button id="copyDetail" class="ghost">copy json</button></div>
