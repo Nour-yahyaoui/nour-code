@@ -112,6 +112,7 @@ class ChatResponse(BaseModel):
 
     session_id: str
     content: str
+    thinking: str = Field(default="", description="The model's reasoning for the final answer (thinking mode).")
     iterations: int = 0
     finished: bool = True
     finish_reason: str = "stop"
