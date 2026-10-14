@@ -603,7 +603,8 @@ async def _add_logging_python(ctx: dict[str, Any], path: Path, source: str, leve
         insertions.append((_py_import_insert_index(tree), ["import logging", ""]))
         changes["logger_added"] = True
     if not _py_has_logger(tree):
-        insertions.append((_py_import_insert_index(tree), ["logger = logging.getLogger(__name__)", ""]))
+        # Two trailing blank lines: PEP8 wants two before a top-level definition.
+        insertions.append((_py_import_insert_index(tree), ["logger = logging.getLogger(__name__)", "", ""]))
         changes["logger_added"] = True
 
     for node in _py_functions(tree):
@@ -807,7 +808,7 @@ def _py_logger_edits(tree: ast.Module) -> list[tuple[int, int, list[str]]]:
     if not _py_has_logging_import(tree):
         edits.append((_py_import_insert_index(tree), 0, ["import logging", ""]))
     if not _py_has_logger(tree):
-        edits.append((_py_import_insert_index(tree), 0, ["logger = logging.getLogger(__name__)", ""]))
+        edits.append((_py_import_insert_index(tree), 0, ["logger = logging.getLogger(__name__)", "", ""]))
     return edits
 
 
