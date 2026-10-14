@@ -1544,6 +1544,7 @@ def _github_workflow(info: dict[str, Any]) -> str:
         }[manager]
         if not info.get("lockfile"):
             install = install.replace(" ci", " install").replace(" --frozen-lockfile", "")
+        install = f"      - run: {install}"
         lint = f"      - run: {manager} run lint --if-present"
         test = f"      - run: {manager} test --if-present"
         build = f"      - run: {manager} run build --if-present"
