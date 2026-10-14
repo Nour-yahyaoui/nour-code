@@ -263,13 +263,15 @@ def test_openapi_schema_is_available(client) -> None:
         assert path in schema["paths"], f"{path} missing from OpenAPI"
 
 
-def test_unhandled_errors_are_json(client, monkeypatch: pytest.MonkeyPatch) -> None:
-    test_client, container, _ = client
+def test_unhandled_errors_are_json(settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app(settings)
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        container = app.state.container
 
-    async def boom(*args, **kwargs):
-        raise RuntimeError("kaboom")
+        async def boom(*args, **kwargs):
+            raise RuntimeError("kaboom")
 
-    monkeypatch.setattr(container.agent, "run_sync", boom)
-    response = test_client.post("/chat/sync", json={"message": "hi"})
+        monkeypatch.setattr(container.agent, "run_sync", boom)
+        response = test_client.post("/chat/sync", json={"message": "hi"})
     assert response.status_code == 500
     assert response.json()["code"] == "internal_error"
