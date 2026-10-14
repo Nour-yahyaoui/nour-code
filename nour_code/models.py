@@ -195,6 +195,30 @@ class ChatMessage(BaseModel):
         return payload
 
 
+class FileEntry(StrictModel):
+    """One entry of a workspace listing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    path: str
+    type: Literal["file", "dir"]
+    size: int = 0
+    modified: float = 0.0
+
+
+class FileListResponse(StrictModel):
+    """Result of ``GET /files``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    root: str
+    path: str
+    count: int = 0
+    truncated: bool = False
+    entries: list[FileEntry] = Field(default_factory=list)
+
+
 class ApprovalRequest(StrictModel):
     """Body of ``POST /sessions/{id}/approve``."""
 
