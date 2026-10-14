@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
+import anyio
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +35,7 @@ from .models import (
     ChatResponse,
     DeleteSessionResponse,
     ErrorResponse,
+    FileContentResponse,
     FileEntry,
     FileListResponse,
     HealthResponse,
@@ -569,6 +571,47 @@ def _register_routes(app: FastAPI) -> None:
             entries=entries,
         )
 
+    @app.get(
+        "/files/content",
+        response_model=FileContentResponse,
+        summary="Read one workspace file (read-only)",
+    )
+    async def read_file_content(container: ContainerDep, path: str) -> FileContentResponse:
+        """Return the text of a file inside the allowed roots.
+
+        Strictly read-only: nothing here can write, and the same
+        ``permissions.yaml`` scope applies (denied globs, size caps, roots).
+        """
+        try:
+            target = container.permissions.resolve_path(path, must_exist=True, kind="file")
+        except PermissionDeniedError as exc:
+            raise HTTPException(status_code=403, detail=f"path rejected: {exc}") from exc
+
+        try:
+            stat = target.stat()
+            raw = await anyio.Path(target).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"cannot read {path!r}: {exc}") from exc
+
+        cap = min(container.settings.max_tool_output_chars, container.permissions.config.filesystem.max_read_bytes)
+        truncated = len(raw) > cap
+        text = raw[:cap]
+        binary = "\x00" in raw[:8192]
+        if binary:
+            text = "(binary file - not displayed)"
+            truncated = False
+
+        return FileContentResponse(
+            path=str(target),
+            name=target.name,
+            content=text,
+            size=stat.st_size,
+            modified=round(stat.st_mtime, 3),
+            truncated=truncated,
+            binary=binary,
+            language=_language_of(target),
+        )
+
     @app.get("/health", response_model=HealthResponse, summary="Ollama + model health")
     async def health(container: ContainerDep) -> HealthResponse:
         return await container.health()
@@ -602,6 +645,20 @@ async def _with_lock(generator: AsyncIterator[str], lock: asyncio.Lock) -> Async
 # Minimal browser console (convenience only — the API is the real interface)
 # ---------------------------------------------------------------------------
 CONSOLE_ASSET = Path(__file__).resolve().parent / "static" / "console.html"
+
+
+
+def _language_of(path: Path) -> str:
+    """Cheap syntax hint for the read-only file viewer."""
+    suffixes = {
+        ".py": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+        ".ts": "typescript", ".tsx": "typescript", ".jsx": "javascript",
+        ".json": "json", ".yml": "yaml", ".yaml": "yaml", ".toml": "toml", ".ini": "ini",
+        ".html": "html", ".htm": "html", ".css": "css", ".scss": "css", ".md": "markdown",
+        ".rs": "rust", ".go": "go", ".sh": "bash", ".bash": "bash", ".ps1": "powershell",
+        ".sql": "sql", ".xml": "xml", ".svg": "xml", ".env": "ini", ".cfg": "ini",
+    }
+    return suffixes.get(path.suffix.lower(), "text")
 
 
 def _console_html() -> str:

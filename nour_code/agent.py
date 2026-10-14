@@ -525,7 +525,32 @@ class Agent:
         finish = "stop"
         started = time.perf_counter()
         schemas = tools if tools is not None else self.registry.schemas()
+        first_chunk = True
+        await emit(
+            StreamEvent(
+                type="status",
+                data={
+                    "phase": "model_call",
+                    "iteration": iteration,
+                    "model": (options.model if options and options.model else self.settings.model),
+                    "prompt_chars": sum(len(message.content or "") for message in messages),
+                    "tools": len(schemas),
+                },
+            )
+        )
         async for chunk in self.client.stream_chat(messages, schemas, options=options):
+            if first_chunk:
+                first_chunk = False
+                await emit(
+                    StreamEvent(
+                        type="status",
+                        data={
+                            "phase": "model_streaming",
+                            "iteration": iteration,
+                            "wait_ms": round((time.perf_counter() - started) * 1000, 2),
+                        },
+                    )
+                )
             if chunk.kind == "thinking":
                 thinking.append(chunk.text)
                 await emit(StreamEvent(type="thinking", data={"text": chunk.text, "iteration": iteration}))
@@ -556,8 +581,22 @@ class Agent:
         iteration: int,
         options: ModelOptions | None = None,
         tools: list[dict[str, Any]] | None = None,
+        emit: Callable[[StreamEvent], Awaitable[None]] | None = None,
     ) -> tuple[str, str, list[ToolCall], Usage, str]:
         schemas = tools if tools is not None else self.registry.schemas()
+        if emit is not None:
+            await emit(
+                StreamEvent(
+                    type="status",
+                    data={
+                        "phase": "model_call",
+                        "iteration": iteration,
+                        "model": (options.model if options and options.model else self.settings.model),
+                        "prompt_chars": sum(len(message.content or "") for message in messages),
+                        "tools": len(schemas),
+                    },
+                )
+            )
         result: ChatResult = await self.client.chat(messages, schemas, options=options)
         state.usage = state.usage + result.usage
         state.model_calls += 1
@@ -923,7 +962,7 @@ class Agent:
                         )
                     else:
                         content, thought, calls, _usage, finish = await self._sync_iteration(
-                            messages, state, iteration, options=options, tools=schemas
+                            messages, state, iteration, options=options, tools=schemas, emit=emit
                         )
                     if thought:
                         state.thinking_parts.append(thought)

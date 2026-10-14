@@ -225,6 +225,21 @@ class FileListResponse(StrictModel):
     entries: list[FileEntry] = Field(default_factory=list)
 
 
+class FileContentResponse(StrictModel):
+    """Read-only view of one file inside the workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    name: str
+    content: str
+    size: int = 0
+    modified: float = 0.0
+    truncated: bool = False
+    binary: bool = False
+    language: str = "text"
+
+
 class ApprovalRequest(StrictModel):
     """Body of ``POST /sessions/{id}/approve``."""
 
@@ -263,6 +278,7 @@ EventType = Literal[
     "usage",          # 1.2.0: token accounting after a model call
     "verification",   # 1.2.0: result of the project test/lint command
     "file_change",    # 1.2.0: a file that was created, modified or deleted
+    "status",         # 1.2.0: what the agent is waiting on right now
     "warning",
     "error",
     "done",

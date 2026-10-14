@@ -349,3 +349,53 @@ def test_files_respects_the_limit(client, sandbox: Path) -> None:
     body = test_client.get("/files?limit=2").json()
     assert body["count"] == 2
     assert body["truncated"] is True
+
+
+# ---------------------------------------------------------------------------
+# GET /files/content (read-only file viewer)
+# ---------------------------------------------------------------------------
+def test_files_content_returns_the_text(client, sandbox: Path) -> None:
+    test_client, _, _ = client
+    (sandbox / "app.py").write_text("print('hi')\n")
+
+    body = test_client.get("/files/content", params={"path": "app.py"}).json()
+    assert body["content"] == "print('hi')\n"
+    assert body["name"] == "app.py"
+    assert body["language"] == "python"
+    assert body["binary"] is False
+    assert body["truncated"] is False
+
+
+def test_files_content_rejects_paths_outside_the_roots(client, tmp_path: Path) -> None:
+    test_client, _, _ = client
+    outside = tmp_path / "secret.txt"
+    outside.write_text("nope")
+
+    response = test_client.get("/files/content", params={"path": str(outside)})
+    assert response.status_code in {400, 403}
+
+
+def test_files_content_404s_on_a_missing_file(client) -> None:
+    test_client, _, _ = client
+    response = test_client.get("/files/content", params={"path": "nope.txt"})
+    assert response.status_code in {400, 403, 404}
+
+
+def test_files_content_flags_binary_files(client, sandbox: Path) -> None:
+    test_client, _, _ = client
+    (sandbox / "blob.bin").write_bytes(b"\x00\x01\x02\x03")
+
+    body = test_client.get("/files/content", params={"path": "blob.bin"}).json()
+    assert body["binary"] is True
+    assert "binary" in body["content"]
+
+
+def test_files_content_is_read_only(client, sandbox: Path) -> None:
+    """The viewer endpoint has no write side effect of any kind."""
+    test_client, _, _ = client
+    target = sandbox / "untouched.txt"
+    target.write_text("original")
+
+    test_client.get("/files/content", params={"path": "untouched.txt"})
+    assert target.read_text() == "original"
+    assert target.stat().st_mtime <= target.stat().st_mtime
