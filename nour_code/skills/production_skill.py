@@ -505,7 +505,7 @@ def _py_logger_lines(lines: list[str], index: int) -> list[str]:
     while probe < len(lines) and not lines[probe].strip():
         existing_blanks += 1
         probe += 1
-    pad = max(1, 2 - existing_blanks)
+    pad = max(0, 2 - existing_blanks)
     return ["logger = logging.getLogger(__name__)", *[""] * pad]
 
 
