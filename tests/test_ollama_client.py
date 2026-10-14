@@ -10,6 +10,7 @@ import pytest
 from nour_code.models import ChatMessage
 from nour_code.ollama_client import (
     ChatResult,
+    ModelOptions,
     OllamaClient,
     OllamaError,
     OllamaHTTPError,
@@ -320,3 +321,88 @@ async def test_aclose_is_idempotent() -> None:
     client = make_client(lambda request: httpx.Response(200, json=completion()))
     await client.aclose()
     await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# reasoning (Qwen3 thinking mode)
+# ---------------------------------------------------------------------------
+async def test_stream_yields_thinking_chunks() -> None:
+    frames = [
+        {"choices": [{"index": 0, "delta": {"reasoning": "First I should look "}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"reasoning": "at the folder."}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": "It is empty."}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 4, "completion_tokens": 9, "total_tokens": 13}},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames) + "data: [DONE]\n\n"
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    client = make_client(handler)
+    chunks = [chunk async for chunk in client.stream_chat([ChatMessage.user("hi")])]
+    thinking = [c.text for c in chunks if c.kind == "thinking"]
+    tokens = [c.text for c in chunks if c.kind == "token"]
+    assert thinking == ["First I should look ", "at the folder."]
+    assert tokens == ["It is empty."]
+
+
+async def test_stream_accepts_alternative_reasoning_keys() -> None:
+    frames = [
+        {"choices": [{"index": 0, "delta": {"reasoning_content": "hmm"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"thinking": "ok"}, "finish_reason": None}]},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    client = make_client(handler)
+    chunks = [chunk async for chunk in client.stream_chat([ChatMessage.user("hi")])]
+    assert [c.text for c in chunks if c.kind == "thinking"] == ["hmm", "ok"]
+
+
+async def test_chat_captures_reasoning() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = completion("done")
+        payload["choices"][0]["message"]["reasoning"] = "I need to read the file first."
+        return httpx.Response(200, json=payload)
+
+    client = make_client(handler)
+    result = await client.chat([ChatMessage.user("read it")])
+    assert result.thinking == "I need to read the file first."
+    assert result.content == "done"
+
+
+def test_extract_reasoning_tolerates_absent_fields() -> None:
+    assert OllamaClient._extract_reasoning({"content": "hi"}) == ""
+    assert OllamaClient._extract_reasoning({"reasoning": "a", "thinking": "b"}) == "a"
+
+
+def test_model_options_are_forwarded_into_the_payload() -> None:
+    client = make_client(lambda request: httpx.Response(200, json=completion()))
+    payload = client.build_payload(
+        [ChatMessage.user("x")],
+        None,
+        stream=True,
+        model="qwen3:14b",
+        options=ModelOptions(temperature=0.9, top_p=0.8, top_k=40, enable_thinking=True, stop=["###"]),
+    )
+    assert payload["model"] == "qwen3:14b"
+    assert payload["options"]["temperature"] == 0.9
+    assert payload["options"]["top_p"] == 0.8
+    assert payload["options"]["top_k"] == 40
+    assert payload["options"]["enable_thinking"] is True
+    assert payload["options"]["stop"] == ["###"]
+    assert payload["options"]["num_ctx"] == 16384
+
+
+def test_model_options_fall_back_to_settings() -> None:
+    settings = pytest.importorskip("nour_code.config").Settings(
+        metrics_enabled=False, top_p=0.5, repeat_penalty=1.2, enable_thinking=False, stop="END"
+    )
+    client = OllamaClient(settings, client=httpx.AsyncClient(), owns_client=False)
+    payload = client.build_payload([ChatMessage.user("x")], None, stream=False, options=ModelOptions())
+    assert payload["options"]["top_p"] == 0.5
+    assert payload["options"]["repeat_penalty"] == 1.2
+    assert payload["options"]["enable_thinking"] is False
+    assert payload["options"]["stop"] == ["END"]
