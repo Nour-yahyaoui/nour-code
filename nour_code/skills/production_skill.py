@@ -344,6 +344,13 @@ def find_js_functions(src: str) -> list[dict[str, Any]]:
     def _line_start(index: int) -> int:
         return src.rfind("\n", 0, index) + 1
 
+    def _body_line_start(source: str, brace_index: int) -> int:
+        """Index of the first line *inside* the body opened at ``brace_index``."""
+        header_end = source.count("\n", 0, brace_index)
+        rest = source[brace_index + 1 : brace_index + 2]
+        # A body that starts on the same line as its braces keeps that line.
+        return header_end if rest and rest != "\n" else header_end + 1
+
     def _record(header: re.Match[str], kind: str, search_from: int) -> None:
         if not mask[header.start()]:
             return
@@ -375,7 +382,7 @@ def find_js_functions(src: str) -> list[dict[str, Any]]:
                 "close_index": close_index,
                 "body_start": open_index + 1,
                 "body_end": close_index,
-                "body_line_start": src.count("\n", 0, open_index + 1),
+                "body_line_start": _body_line_start(src, open_index),
                 "body_line_end": close_line,
                 "indent": indent,
                 "params": _js_params(src[header.end() - 1 : open_index + 1]),

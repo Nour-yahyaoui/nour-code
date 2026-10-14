@@ -107,6 +107,12 @@ async def test_add_logging_javascript(container, sandbox: Path) -> None:
     assert 'logger.info("handler() called")' in content
     assert 'logger.info("sync() called")' in content
     assert content.count("{") == content.count("}")
+    # the log line must land *inside* the function body, not above it
+    lines = content.splitlines()
+    header = next(i for i, line in enumerate(lines) if "async function handler" in line)
+    body = next(i for i, line in enumerate(lines) if "await fetchUser" in line)
+    logged = next(i for i, line in enumerate(lines) if 'logger.info("handler() called")' in line)
+    assert header < logged < body
 
 
 async def test_add_logging_rejects_non_source(container, sandbox: Path) -> None:
@@ -222,6 +228,11 @@ async def test_add_input_validation_javascript(container, sandbox: Path) -> None
     content = target.read_text()
     assert "throw new TypeError(\"req is required\")" in content
     assert content.count("{") == content.count("}")
+    lines = content.splitlines()
+    header = next(i for i, line in enumerate(lines) if "async function handler" in line)
+    guard = next(i for i, line in enumerate(lines) if 'throw new TypeError("req is required")' in line)
+    body = next(i for i, line in enumerate(lines) if "await fetchUser" in line)
+    assert header < guard < body
 
 
 # ---------------------------------------------------------------------------
