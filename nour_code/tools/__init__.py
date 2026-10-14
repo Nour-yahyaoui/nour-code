@@ -81,8 +81,8 @@ class ToolResult:
         return cls(ok=False, status="error", output="", error=error, metadata=metadata)
 
     @classmethod
-    def denied(cls, reason: str, **metadata: Any) -> "ToolResult":
-        return cls(ok=False, status="denied", output="", error=reason, metadata=metadata)
+    def denied(cls, reason: str, output: Any = "", **metadata: Any) -> "ToolResult":
+        return cls(ok=False, status="denied", output=output, error=reason, metadata=metadata)
 
     def render(self, max_chars: int) -> str:
         """String form handed back to the model (always size-capped)."""
@@ -292,7 +292,11 @@ class ToolRegistry:
                         self._skill_dispatcher(name, args, ctx),
                         timeout=self.settings.skill_tool_timeout_seconds,
                     )
-                    if isinstance(payload, dict) and payload.get("ok") is False:
+                    if isinstance(payload, dict) and payload.get("denied") is True:
+                        result = ToolResult.denied(
+                            str(payload.get("error") or "denied by skill"), output=payload
+                        )
+                    elif isinstance(payload, dict) and payload.get("ok") is False:
                         # The skill ran but reports a failure: surface it as a tool error
                         # while keeping the structured payload for the model.
                         result = ToolResult(
@@ -301,6 +305,7 @@ class ToolRegistry:
                             output=payload,
                             error=str(payload.get("error") or "skill reported a failure"),
                         )
+
                     else:
                         result = self._coerce_payload(payload)
             else:
