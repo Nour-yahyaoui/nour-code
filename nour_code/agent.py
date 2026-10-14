@@ -87,6 +87,7 @@ class TurnState:
     usage: Usage = field(default_factory=Usage)
     model_calls: int = 0
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    thinking_parts: list[str] = field(default_factory=list)
     touched_files: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     iterations: int = 0
@@ -300,14 +301,18 @@ class Agent:
         emit: Callable[[StreamEvent], Awaitable[None]],
         state: TurnState,
         iteration: int,
-    ) -> tuple[str, list[ToolCall], Usage, str]:
+    ) -> tuple[str, str, list[ToolCall], Usage, str]:
         content: list[str] = []
+        thinking: list[str] = []
         calls: list[ToolCall] = []
         usage = Usage()
         finish = "stop"
         started = time.perf_counter()
         async for chunk in self.client.stream_chat(messages, self.registry.schemas()):
-            if chunk.kind == "token":
+            if chunk.kind == "thinking":
+                thinking.append(chunk.text)
+                await emit(StreamEvent(type="thinking", data={"text": chunk.text, "iteration": iteration}))
+            elif chunk.kind == "token":
                 content.append(chunk.text)
                 await emit(StreamEvent(type="token", data={"text": chunk.text, "iteration": iteration}))
             elif chunk.kind == "tool_calls":
@@ -325,16 +330,16 @@ class Agent:
         state.usage = state.usage + usage
         state.model_calls += 1
         self._log_model_call(state, usage, latency_ms, iteration, "ok")
-        return "".join(content), calls, usage, finish
+        return "".join(content), "".join(thinking), calls, usage, finish
 
     async def _sync_iteration(
         self, messages: list[ChatMessage], state: TurnState, iteration: int
-    ) -> tuple[str, list[ToolCall], Usage, str]:
+    ) -> tuple[str, str, list[ToolCall], Usage, str]:
         result: ChatResult = await self.client.chat(messages, self.registry.schemas())
         state.usage = state.usage + result.usage
         state.model_calls += 1
         self._log_model_call(state, result.usage, result.latency_ms, iteration, "ok")
-        return result.content, result.tool_calls, result.usage, result.finish_reason
+        return result.content, result.thinking, result.tool_calls, result.usage, result.finish_reason
 
     # -- production-ready mode ---------------------------------------------
     async def _production_candidates(self, session: Session, state: TurnState) -> list[Path]:
@@ -651,11 +656,13 @@ class Agent:
                     state.iterations = iteration
                     messages = self._messages_for_model(session, system)
                     if stream:
-                        content, calls, _usage, finish = await self._stream_iteration(
+                        content, thought, calls, _usage, finish = await self._stream_iteration(
                             messages, emit, state, iteration
                         )
                     else:
-                        content, calls, _usage, finish = await self._sync_iteration(messages, state, iteration)
+                        content, thought, calls, _usage, finish = await self._sync_iteration(messages, state, iteration)
+                    if thought:
+                        state.thinking_parts.append(thought)
 
                     if calls:
                         session.add(ChatMessage.assistant(content or None, calls))
@@ -735,6 +742,7 @@ class Agent:
         response = ChatResponse(
             session_id=session.session_id,
             content=final_text,
+            thinking="\n\n".join(part for part in state.thinking_parts if part),
             iterations=state.iterations,
             finished=finished,
             finish_reason=finish_reason,

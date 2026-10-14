@@ -339,6 +339,10 @@ async def _sse_stream(container: Container, session: Session, payload: ChatReque
                 StreamEvent(type="error", data={"message": f"{exc.__class__.__name__}: {exc}", "fatal": True}).to_sse()
             )
         finally:
+            # Audit entries are written off the hot path; flush them so a client
+            # that reads /audit right after the turn sees every call.
+            with contextlib.suppress(Exception):
+                await container.registry.drain_audit()
             await queue.put(None)
 
     producer = asyncio.create_task(_produce())
@@ -384,13 +388,17 @@ def _register_routes(app: FastAPI) -> None:
     async def chat_sync(payload: ChatRequest, container: ContainerDep) -> ChatResponse:
         session = await _resolve_session(container, payload)
         async with container.store.lock(session.session_id):
-            return await container.agent.run_sync(
-                session,
-                payload.message,
-                max_iterations=payload.max_iterations,
-                production_mode=payload.production_ready,
-                audit=container.audit,
-            )
+            try:
+                return await container.agent.run_sync(
+                    session,
+                    payload.message,
+                    max_iterations=payload.max_iterations,
+                    production_mode=payload.production_ready,
+                    audit=container.audit,
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    await container.registry.drain_audit()
 
     @app.get("/skills", response_model=SkillListResponse, summary="List loaded skills")
     async def list_skills(container: ContainerDep) -> SkillListResponse:
