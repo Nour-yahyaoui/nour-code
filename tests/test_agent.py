@@ -87,14 +87,30 @@ async def test_unknown_tool_does_not_crash(container) -> None:
 
 
 async def test_max_iterations_produces_warning(container) -> None:
+    """Distinct calls each iteration: the loop is stopped by the iteration cap."""
+    model = FakeModel()
+    for index in range(4):
+        model.add_tool_call("list_directory", path=f"dir{index}")
+    container.agent.client = model
+
+    session = await container.store.get_or_create()
+    response = await container.agent.run_sync(session, "keep listing", max_iterations=3)
+    assert response.finished is False
+    assert response.finish_reason == "max_iterations"
+    assert any("3 iterations" in warning for warning in response.warnings)
+
+
+async def test_stuck_loop_is_detected_earlier_than_the_cap(container) -> None:
+    """The same call repeated: the guard stops the turn with a specific reason."""
     model = FakeModel([{"tool_calls": [{"name": "list_directory", "arguments": {"path": "."}}]}])
     container.agent.client = model
 
     session = await container.store.get_or_create()
-    response = await container.agent.run_sync(session, "loop forever", max_iterations=3)
+    response = await container.agent.run_sync(session, "loop forever", max_iterations=10)
     assert response.finished is False
-    assert response.finish_reason == "max_iterations"
-    assert any("3 iterations" in warning for warning in response.warnings)
+    assert response.finish_reason == "loop_detected"
+    assert any("in a row" in warning for warning in response.warnings)
+    assert response.iterations < 10
 
 
 async def test_malformed_tool_arguments_json(container) -> None:

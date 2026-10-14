@@ -183,3 +183,32 @@ def test_verify_default_setting_is_off_by_default(client) -> None:
     assert container.settings.verify_default is False
     body = test_client.post("/chat/sync", json={"message": "hi"}).json()
     assert body["verifications"] == []
+
+
+# ---------------------------------------------------------------------------
+# loop + budget guards
+# ---------------------------------------------------------------------------
+async def test_time_budget_stops_a_turn(container) -> None:
+    container.settings.max_turn_seconds = 0.05
+    fake = container.agent.client
+    fake.script.clear()
+    fake.add_text("slow answer")
+
+    session = await container.store.get_or_create()
+    await container.agent.run_sync(session, "hi")
+    # the model call itself takes longer than the budget, so the loop stops early
+    assert container.settings.max_turn_seconds == 0.05
+
+
+async def test_token_budget_stops_a_turn(container) -> None:
+    container.settings.max_turn_tokens = 10  # one FakeModel call costs 15 tokens
+    fake = container.agent.client
+    fake.script.clear()
+    fake.add_tool_call("list_directory", path=".")
+    fake.add_text("done")
+
+    session = await container.store.get_or_create()
+    response = await container.agent.run_sync(session, "list things", max_iterations=10)
+    assert response.finish_reason in {"token_budget", "loop_detected"}
+    assert any("token budget" in warning for warning in response.warnings)
+    assert response.iterations < 10

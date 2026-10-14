@@ -131,6 +131,7 @@ class TurnState:
     thinking_parts: list[str] = field(default_factory=list)
     approval_mode: str = "off"
     verifications: list[dict[str, Any]] = field(default_factory=list)
+    recent_signatures: list[str] = field(default_factory=list)
     approvals_requested: int = 0
     approvals_rejected: list[str] = field(default_factory=list)
     touched_files: list[str] = field(default_factory=list)
@@ -398,6 +399,22 @@ class Agent:
                                 },
                             )
                         )
+
+    # -- loop guards --------------------------------------------------------
+    def _repeated_call(self, state: TurnState, calls: list[ToolCall]) -> bool:
+        """True when the model keeps issuing the identical call (a stuck loop)."""
+        if not calls:
+            return False
+        threshold = self.settings.loop_detection_threshold
+        signature = json.dumps(
+            [{"tool": call.function.name, "arguments": call.function.arguments} for call in calls],
+            sort_keys=True,
+        )
+        state.recent_signatures.append(signature)
+        if len(state.recent_signatures) < threshold:
+            return False
+        tail = state.recent_signatures[-threshold:]
+        return len(set(tail)) == 1
 
     # -- verification -------------------------------------------------------
     async def _verify(
@@ -883,8 +900,21 @@ class Agent:
         finish_reason = "stop"
 
         try:
+            deadline = time.monotonic() + self.settings.max_turn_seconds
+            budget_exhausted: str | None = None
+
             for round_index in range(rounds):
                 for iteration in range(1, limit + 1):
+                    if time.monotonic() > deadline:
+                        budget_exhausted = (
+                            f"stopped after {self.settings.max_turn_seconds:.0f}s (time budget exhausted)"
+                        )
+                        break
+                    if self.settings.max_turn_tokens and state.usage.total_tokens >= self.settings.max_turn_tokens:
+                        budget_exhausted = (
+                            f"stopped after {state.usage.total_tokens} tokens (token budget exhausted)"
+                        )
+                        break
                     state.iterations = iteration
                     messages = self._messages_for_model(session, system)
                     if stream:
@@ -917,6 +947,12 @@ class Agent:
                         )
                         async for event in self._drain(queue):
                             yield event
+                        if self._repeated_call(state, calls):
+                            budget_exhausted = (
+                                f"stopped: `{calls[0].function.name}` was called "
+                                f"{self.settings.loop_detection_threshold} times in a row with the same arguments"
+                            )
+                            break
                         continue
 
                     final_text = content
@@ -932,6 +968,16 @@ class Agent:
                     )
                     finish_reason = "max_iterations"
                     finished = False
+
+                if budget_exhausted:
+                    state.warnings.append(budget_exhausted)
+                    finish_reason = (
+                        "loop_detected"
+                        if "in a row" in budget_exhausted
+                        else ("token_budget" if "token budget" in budget_exhausted else "time_budget")
+                    )
+                    finished = False
+                    break
 
                 if not production:
                     break
