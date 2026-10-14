@@ -348,3 +348,30 @@ async def test_missing_argument_is_reported(container, sandbox: Path) -> None:
     result = await invoke(container, "add_logging")
     assert not result.ok
     assert "missing required argument" in (result.error or "")
+
+
+async def test_error_handling_then_validation_compose(container, sandbox: Path) -> None:
+    """add_error_handling adds a bare `raise`; validation must still be applied."""
+    target = sandbox / "compose.py"
+    target.write_text("def load(path: str):\n    return open(path).read()\n")
+    await invoke(container, "add_logging", file_path=str(target))
+    await invoke(container, "add_error_handling", file_path=str(target))
+    result = await invoke(container, "add_input_validation", file_path=str(target))
+    assert result.ok, result.error
+    content = target.read_text()
+    assert "if not isinstance(path, str):" in content
+    assert "except Exception as exc:" in content
+    ast.parse(content)
+
+
+async def test_validation_refuses_to_duplicate(container, sandbox: Path) -> None:
+    target = sandbox / "validated.py"
+    target.write_text(
+        "def load(path):\n"
+        "    if not isinstance(path, str):\n"
+        "        raise TypeError('bad')\n"
+        "    return open(path).read()\n"
+    )
+    result = await invoke(container, "add_input_validation", file_path=str(target))
+    assert result.output.get("already_compliant") is True
+    assert target.read_text().count("isinstance(path, str)") == 1
