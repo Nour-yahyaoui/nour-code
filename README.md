@@ -124,9 +124,29 @@ python -m uvicorn nour_code.main:app --reload --port 8000
 
 Then open:
 
-* **<http://localhost:8000>** — tiny browser console (send prompts, watch tool calls stream in)
+* **<http://localhost:8000>** — browser console (send prompts, watch the agent work live)
 * **<http://localhost:8000/docs>** — interactive OpenAPI documentation
 * **<http://localhost:8000/health>** — Ollama + model status
+
+### Browser console
+
+`GET /` serves a single-page client (`nour_code/static/console.html`) that talks to
+the same JSON/SSE API:
+
+* **Two resizable panes** — drag the vertical gutter to rebalance *agent* vs
+  *console*, and the horizontal one to grow the event inspector. Both positions
+  are remembered in `localStorage`.
+* **Live transcript** — tokens stream in as they arrive; every tool call becomes
+  a card showing its arguments, then its status, duration and full output.
+* **Console pane** — every SSE frame (`token`, `tool_call`, `tool_result`,
+  `skill_loaded`, `error`, `done`) with a timestamp and a one-line summary;
+  click a row to inspect the raw payload. Filter with free text, `type:tool_call`
+  or `tool:read_file`, and switch to the **timeline** (tool calls in order) or
+  **skills & tools** tab.
+* **Live counters, stop and export** — `N events · K tools · Ss`, `Esc`/`stop`
+  aborts the stream (the server cancels the model call), and **export** downloads
+  the turn as JSONL.
+* Shortcuts: `Ctrl`/`⌘ + Enter` streams the message, `Esc` stops it.
 
 Check that everything is wired:
 
