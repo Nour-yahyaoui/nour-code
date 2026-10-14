@@ -211,7 +211,7 @@ async def _read_source(ctx: dict[str, Any], raw_path: str, *, allowed: set[str] 
     try:
         path = permissions.resolve_path(raw_path, must_exist=True, kind="file")
     except PermissionError as exc:
-        return {"ok": False, "error": f"path rejected: {exc}"}
+        return {"ok": False, "denied": True, "error": f"path rejected: {exc}"}
     if allowed and path.suffix.lower() not in allowed:
         return {
             "ok": False,
@@ -1461,7 +1461,7 @@ async def _generate_dockerfile(
     try:
         root = permissions.resolve_path(project_root, must_exist=True, kind="dir")
     except PermissionError as exc:
-        return {"ok": False, "error": f"path rejected: {exc}"}
+        return {"ok": False, "denied": True, "error": f"path rejected: {exc}"}
 
     info = await _detect_project(ctx, root, runtime)
     if info["runtime"] == "generic":
@@ -1729,7 +1729,7 @@ async def _generate_ci_pipeline(
     try:
         root = permissions.resolve_path(project_root, must_exist=True, kind="dir")
     except PermissionError as exc:
-        return {"ok": False, "error": f"path rejected: {exc}"}
+        return {"ok": False, "denied": True, "error": f"path rejected: {exc}"}
 
     if target not in {"github", "gitlab"}:
         return {
@@ -1816,7 +1816,7 @@ async def handle(tool_name: str, args: dict[str, Any], ctx: dict[str, Any]) -> d
     except KeyError as exc:
         return {"ok": False, "error": f"missing required argument: {exc.args[0]}"}
     except PermissionError as exc:
-        return {"ok": False, "error": f"permission denied: {exc}"}
+        return {"ok": False, "denied": True, "error": f"permission denied: {exc}"}
     except (TypeError, ValueError) as exc:
         return {"ok": False, "error": f"invalid arguments: {exc}"}
     except OSError as exc:

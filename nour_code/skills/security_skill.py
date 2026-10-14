@@ -365,7 +365,7 @@ async def _security_scan(
     try:
         root = _resolve(ctx, path)
     except PermissionError as exc:
-        return {"ok": False, "error": f"path rejected: {exc}"}
+        return {"ok": False, "denied": True, "error": f"path rejected: {exc}"}
 
     threshold = SEVERITY_ORDER.get(str(severity_threshold).lower(), 1)
     findings: list[dict[str, Any]] = []
@@ -426,7 +426,7 @@ async def _check_secrets(
     try:
         root = _resolve(ctx, path)
     except PermissionError as exc:
-        return {"ok": False, "error": f"path rejected: {exc}"}
+        return {"ok": False, "denied": True, "error": f"path rejected: {exc}"}
 
     findings: list[dict[str, Any]] = []
     files_scanned = 0
@@ -509,7 +509,7 @@ async def _check_dependency_cves(
                     "message": f"no package.json found in {target.parent}",
                 }
     except PermissionError as exc:
-        return {"ok": False, "error": f"path rejected: {exc}"}
+        return {"ok": False, "denied": True, "error": f"path rejected: {exc}"}
 
     project_dir = target.parent
     try:
@@ -662,7 +662,7 @@ async def handle(tool_name: str, args: dict[str, Any], ctx: dict[str, Any]) -> d
     except KeyError as exc:
         return {"ok": False, "error": f"missing required argument: {exc.args[0]}"}
     except PermissionError as exc:
-        return {"ok": False, "error": f"permission denied: {exc}"}
+        return {"ok": False, "denied": True, "error": f"permission denied: {exc}"}
     except (TypeError, ValueError) as exc:
         return {"ok": False, "error": f"invalid arguments: {exc}"}
     except OSError as exc:
