@@ -24,6 +24,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from . import __version__
 from .agent import Agent
+from .approvals import ApprovalRegistry
 from .config import APP_NAME, Settings, load_settings
 from .models import (
     AuditResponse,
@@ -69,6 +70,7 @@ class Container:
     client: OllamaClient
     store: SessionStore
     agent: Agent
+    approvals: ApprovalRegistry
     started_at: float
 
     @classmethod
@@ -113,6 +115,7 @@ class Container:
         store = SessionStore(settings, logger=log.getChild("sessions"))
         await store.start()
 
+        approvals = ApprovalRegistry(timeout_seconds=settings.approval_timeout_seconds)
         agent = Agent(
             settings,
             client=client,
@@ -120,6 +123,7 @@ class Container:
             store=store,
             permissions=permissions,
             skills=skills,
+            approvals=approvals,
             logger=log.getChild("agent"),
         )
         return cls(
@@ -133,6 +137,7 @@ class Container:
             client=client,
             store=store,
             agent=agent,
+            approvals=approvals,
             started_at=time.time(),
         )
 
@@ -143,6 +148,10 @@ class Container:
             await self.store.stop()
         except Exception as exc:  # noqa: BLE001 - shutdown must not fail
             self.logger.error("session shutdown failed: %s", exc)
+        try:
+            self.approvals.cancel_all()
+        except Exception as exc:  # noqa: BLE001 - shutdown must not fail
+            self.logger.error("approval shutdown failed: %s", exc)
         try:
             await self.registry.drain()
         except Exception as exc:  # noqa: BLE001
