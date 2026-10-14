@@ -55,7 +55,7 @@ allow.
 3. [Run](#3-run)
 4. [Configuration](#4-configuration)
 5. [Permissions](#5-permissions)
-6. [API](#6-api)
+6. [API](#6-api) — [approvals](#61-human-in-the-loop-approvals) · [per-request controls](#62-per-request-controls) · [guards](#63-guard-rails)
 7. [Streaming events (SSE)](#7-streaming-events-sse)
 8. [Built-in tools](#8-built-in-tools)
 9. [Skills](#9-skills)
@@ -182,6 +182,22 @@ file in the working directory is read automatically (see `.env.example`).
 | `NOUR_CODE_TEMPERATURE` | `0.1` | Low temperature = deterministic code |
 | `NOUR_CODE_NUM_CTX` | `16384` | Context window passed to Ollama |
 | `NOUR_CODE_NUM_PREDICT` | unset | Cap on generated tokens |
+| `NOUR_CODE_MAX_TURN_SECONDS` | `900` | Wall-clock budget for one turn (`time_budget`) |
+| `NOUR_CODE_MAX_TURN_TOKENS` | `0` | Token budget for one turn, `0` = unlimited (`token_budget`) |
+| `NOUR_CODE_LOOP_DETECTION_THRESHOLD` | `3` | Identical calls in a row that count as a stuck loop |
+| `NOUR_CODE_APPROVAL_MODE` | `off` | `off` / `mutating` / `all` default for every request |
+| `NOUR_CODE_APPROVAL_TIMEOUT_SECONDS` | `300` | How long a proposal waits for a human |
+| `NOUR_CODE_VERIFY_DEFAULT` | `false` | Run the project checks after every turn |
+| `NOUR_CODE_VERIFY_TIMEOUT_SECONDS` | `180` | Timeout for that command |
+| `NOUR_CODE_PLAN_MODE` | `auto` | Reserved for plan mode (1.3.0) |
+| `NOUR_CODE_MAX_CONCURRENT_TURNS` | `4` | Parallel agent turns allowed |
+| `NOUR_CODE_TOP_P` | – | Nucleus sampling, forwarded to Ollama |
+| `NOUR_CODE_TOP_K` | – | Top-k sampling |
+| `NOUR_CODE_REPEAT_PENALTY` | – | Repetition penalty |
+| `NOUR_CODE_PRESENCE_PENALTY` | – | Presence penalty |
+| `NOUR_CODE_FREQUENCY_PENALTY` | – | Frequency penalty |
+| `NOUR_CODE_STOP` | – | Comma separated stop sequences |
+| `NOUR_CODE_ENABLE_THINKING` | – | Qwen3 thinking mode on/off |
 | `NOUR_CODE_MAX_ITERATIONS` | `15` | Tool-call iterations per turn |
 | `NOUR_CODE_MAX_TOOL_OUTPUT_CHARS` | `100000` | Hard cap on any tool result |
 | `NOUR_CODE_MAX_TOOL_HISTORY_CHARS` | `20000` | Cap per tool message kept in history |
