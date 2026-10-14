@@ -18,6 +18,7 @@ checklist is appended to the final answer.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -481,9 +482,27 @@ class Agent:
         return await gate.request(tool=tool, arguments=arguments, iteration=iteration, skill=skill, emit=emit)
 
     # -- event helpers ------------------------------------------------------
-    async def _drain(self, queue: list[StreamEvent]) -> AsyncIterator[StreamEvent]:
-        while queue:
-            yield queue.pop(0)
+    async def _drain(self, queue: asyncio.Queue[StreamEvent]) -> AsyncIterator[StreamEvent]:
+        """Release everything that is already queued, without waiting."""
+        while not queue.empty():
+            yield queue.get_nowait()
+
+    async def _pump(
+        self, task: asyncio.Task[Any], queue: asyncio.Queue[StreamEvent]
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream events *while* ``task`` runs, instead of buffering them.
+
+        This is what keeps the UI alive during a slow model call or while a
+        proposal is parked waiting for a human: whatever the task emits is
+        forwarded to the client immediately.
+        """
+        while not task.done():
+            while not queue.empty():
+                yield queue.get_nowait()
+            with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+                await asyncio.wait({task}, timeout=0.05)
+        while not queue.empty():
+            yield queue.get_nowait()
 
     async def _emit_skill_events(self, session: Session, emit: Callable[[StreamEvent], Awaitable[None]]) -> None:
         """Announce loaded skills once per (re)load so clients can display them."""
@@ -896,10 +915,10 @@ class Agent:
         seed: int | None = None,
         enable_thinking: bool | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        queue: list[StreamEvent] = []
+        queue: asyncio.Queue[StreamEvent] = asyncio.Queue()
 
         async def emit(event: StreamEvent) -> None:
-            queue.append(event)
+            queue.put_nowait(event)
 
         state = TurnState()
         state.session_id = session.session_id  # type: ignore[attr-defined]
@@ -957,13 +976,20 @@ class Agent:
                     state.iterations = iteration
                     messages = self._messages_for_model(session, system)
                     if stream:
-                        content, thought, calls, _usage, finish = await self._stream_iteration(
-                            messages, emit, state, iteration, options=options, tools=schemas
+                        model_task = asyncio.ensure_future(
+                            self._stream_iteration(
+                                messages, emit, state, iteration, options=options, tools=schemas
+                            )
                         )
                     else:
-                        content, thought, calls, _usage, finish = await self._sync_iteration(
-                            messages, state, iteration, options=options, tools=schemas, emit=emit
+                        model_task = asyncio.ensure_future(
+                            self._sync_iteration(
+                                messages, state, iteration, options=options, tools=schemas, emit=emit
+                            )
                         )
+                    async for event in self._pump(model_task, queue):
+                        yield event
+                    content, thought, calls, _usage, finish = await model_task
                     if thought:
                         state.thinking_parts.append(thought)
                     await emit(
@@ -981,9 +1007,14 @@ class Agent:
 
                     if calls:
                         session.add(ChatMessage.assistant(content or None, calls))
-                        await self._execute_tool_calls(
-                            session, calls, state=state, iteration=iteration, ctx=ctx, emit=emit
+                        tool_task = asyncio.ensure_future(
+                            self._execute_tool_calls(
+                                session, calls, state=state, iteration=iteration, ctx=ctx, emit=emit
+                            )
                         )
+                        async for event in self._pump(tool_task, queue):
+                            yield event
+                        await tool_task
                         async for event in self._drain(queue):
                             yield event
                         if self._repeated_call(state, calls):
@@ -1021,9 +1052,14 @@ class Agent:
                 if not production:
                     break
 
-                await self._production_harden(
-                    session, state, ctx, emit, round_index=round_index, user_message=user_message
+                harden_task = asyncio.ensure_future(
+                    self._production_harden(
+                        session, state, ctx, emit, round_index=round_index, user_message=user_message
+                    )
                 )
+                async for event in self._pump(harden_task, queue):
+                    yield event
+                await harden_task
                 async for event in self._drain(queue):
                     yield event
 

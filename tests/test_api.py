@@ -261,20 +261,24 @@ def test_console_page_has_the_full_client() -> None:
     assert CONSOLE_ASSET.is_file()
     html = _console_html()
     for marker in (
-        'id="transcript"',
-        'id="eventsView"',
-        'id="inspector"',
-        'id="vGutter"',
-        'id="hGutter"',
-        'id="timelineView"',
-        'id="skillsView"',
+        'id="transcript"',       # chat
+        'id="eventsView"',       # raw stream drawer
+        'id="tree"',             # workspace file tree
+        'id="fileBody"',         # read-only file viewer
+        'id="gutter"',           # resizable panes
+        'id="themeBtn"',         # light / dark
+        'id="sprite"',           # every glyph is an inline SVG symbol
+        'id="approve"',          # approvals toggle
+        "fetch('/files/content",  # read-only file reads
         "fetch('/chat'",
-        "fetch('/chat/sync'",
         "getReader()",
         "AbortController",
-        "localStorage.setItem('nour.ui.chatWidth'",
+        "localStorage.setItem('nour.ui.theme'",
     ):
         assert marker in html, f"{marker} missing from the console"
+
+    # no emoji / icon-font glyphs: icons come from the sprite
+    assert '<use href="#i-' in html
 
 
 def test_console_page_handles_a_missing_asset(monkeypatch: pytest.MonkeyPatch) -> None:
