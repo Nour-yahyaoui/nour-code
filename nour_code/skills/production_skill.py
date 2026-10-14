@@ -193,10 +193,11 @@ def insert_lines(lines: list[str], insertions: list[tuple[int, list[str]]]) -> l
 
     ``line_index`` is a 0-based index in the *original* list: ``lines[i]`` stays
     above the inserted block.  Insertions are applied from the bottom up so
-    earlier indices remain valid.
+    earlier indices remain valid; for two insertions at the same index the later
+    one is applied first, which keeps the declared order in the output.
     """
     result = list(lines)
-    for index, block in sorted(insertions, key=lambda pair: pair[0], reverse=True):
+    for index, block in sorted(reversed(insertions), key=lambda pair: pair[0], reverse=True):
         index = max(0, min(index, len(result)))
         result[index:index] = block
     return result
@@ -794,7 +795,7 @@ def apply_edits(lines: list[str], edits: list[tuple[int, int, list[str]]]) -> li
     from an AST/source scan without compensating for earlier edits.
     """
     result = list(lines)
-    for start, removed, block in sorted(edits, key=lambda edit: edit[0], reverse=True):
+    for start, removed, block in sorted(reversed(edits), key=lambda edit: edit[0], reverse=True):
         start = max(0, min(start, len(result)))
         result[start : start + removed] = block
     return result
