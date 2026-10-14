@@ -372,6 +372,42 @@ curl -s 'http://localhost:8000/audit?limit=20' | jq '.entries[-3:]'
 curl -s http://localhost:8000/metrics | grep nour_code | head
 ```
 
+### `GET /files`
+
+Read-only listing of the workspace (resolved inside the allowed roots):
+
+```bash
+curl -s "http://localhost:8000/files?path=.&recursive=true&limit=300" | jq
+```
+
+```json
+{"root": "/home/user/project", "path": "/home/user/project", "count": 2, "truncated": false,
+ "entries": [{"name": "app.py", "path": "/home/user/project/app.py", "type": "file",
+              "size": 812, "modified": 1760434364.12}]}
+```
+
+### `POST /sessions/{id}/approve`
+
+With `"approval": "mutating"` on `/chat`, every call that changes the machine is
+parked until you decide (see [section 6.1](#61-human-in-the-loop-approvals)).
+
+```bash
+# what is waiting?
+curl -s http://localhost:8000/sessions/sess_9f2c1a7b3d44/approvals | jq
+
+# approve one, or everything still to come
+curl -s -X POST http://localhost:8000/sessions/sess_9f2c1a7b3d44/approve \
+  -H 'Content-Type: application/json' -d '{"proposal_id": "prop_ab12cd34", "decision": "approve"}'
+
+curl -s -X POST http://localhost:8000/sessions/sess_9f2c1a7b3d44/approve \
+  -H 'Content-Type: application/json' -d '{"decision": "approve_all"}'
+```
+
+Decisions: `approve`, `reject`, `approve_all`, `reject_all` (the `*_all` forms
+also set the auto-approve flag for the rest of the turn). A proposal that is not
+answered within `NOUR_CODE_APPROVAL_TIMEOUT_SECONDS` (default 300) is rejected
+and the model is told to propose something else.
+
 ### Errors
 
 Errors are always JSON: `{"error": "...", "code": "...", "detail": "..."}` with
@@ -384,10 +420,15 @@ Errors are always JSON: `{"error": "...", "code": "...", "detail": "..."}` with
 
 | Event | Payload | When |
 |---|---|---|
+| `thinking` | `{text, iteration}` | The model's reasoning (Qwen3 thinking mode), streamed as it is produced |
 | `token` | `{text, iteration}` | Every chunk the model produces, forwarded immediately |
 | `tool_call` | `{id, tool, arguments, iteration, skill}` | Before a tool runs |
-| `tool_result` | `{id, tool, status, result, error, duration_ms, iteration, skill}` | After it finishes |
+| `tool_result` | `{id, tool, status, result, error, duration_ms, iteration, skill, rejected?}` | After it finishes |
+| `tool_proposal` | `{id, tool, arguments, iteration, skill, risk, timeout_seconds}` | A mutating call is waiting for your approval |
 | `skill_loaded` | `{name, description, triggers, tools, source, version}` | On the first turn of a session, and after a reload |
+| `usage` | `{iteration, prompt_tokens, completion_tokens, total_tokens, elapsed_ms}` | After every model call |
+| `verification` | `{command, exit_code, stdout, stderr, status, output}` | Result of the project checks (`verify: true`) |
+| `file_change` | `{tool, path, action, iteration, call_id}` | A file was created, modified or deleted |
 | `error` | `{message, code, fatal}` | Model/agent failure; the stream still ends with `done` |
 | `done` | `{response: {...ChatResponse...}}` | Always last |
 
@@ -410,6 +451,53 @@ const response = await fetch('/chat', {
 const reader = response.body.getReader();
 // parse "event: <type>\ndata: <json>\n\n" frames …
 ```
+
+### 6.1 Human-in-the-loop approvals
+
+Ask for a plan you can veto. Send `"approval": "mutating"` (or `"all"`) with
+`POST /chat` and the agent will:
+
+1. emit a `tool_proposal` event instead of running the call,
+2. show an **approve / reject / approve all** card in the console,
+3. wait up to `NOUR_CODE_APPROVAL_TIMEOUT_SECONDS` for
+   `POST /sessions/{id}/approve`,
+4. run it on approval — or turn the rejection into a `DENIED:` tool result so the
+   model proposes a different approach.
+
+Mutating means: `write_file`, `apply_patch`, `delete_file`, `run_shell` and any
+skill tool that rewrites files (`security_skill`'s scanners are explicitly
+read-only). Set `NOUR_CODE_APPROVAL_MODE=mutating` to make it the default for
+every request.
+
+### 6.2 Per-request controls
+
+```bash
+curl -s -X POST http://localhost:8000/chat/sync -H 'Content-Type: application/json' -d '{
+  "message": "add a health endpoint",
+  "model": "qwen3:14b",
+  "temperature": 0.2,
+  "enable_thinking": true,
+  "tools": ["read_file", "write_file", "apply_patch"],
+  "verify": true,
+  "system_extra": "Answer with file paths and a short diff summary.",
+  "approval": "mutating"
+}' | jq '{iterations, thinking, finish_reason, verifications}'
+```
+
+`tools` filters the tool list sent to the model for that turn, `verify` runs the
+project's own checks afterwards (`python -m pytest -q`, `npm test --if-present`,
+`cargo test`, `go test ./...` or `make test`, detected from the manifests), and
+`system_extra` is appended to the system prompt.
+
+### 6.3 Guard rails
+
+| Guard | Setting | Result |
+|---|---|---|
+| Iterations | `NOUR_CODE_MAX_ITERATIONS` (15) | `finish_reason="max_iterations"` + warning |
+| Stuck loop | `NOUR_CODE_LOOP_DETECTION_THRESHOLD` (3) | `finish_reason="loop_detected"` |
+| Wall clock | `NOUR_CODE_MAX_TURN_SECONDS` (900) | `finish_reason="time_budget"` |
+| Tokens | `NOUR_CODE_MAX_TURN_TOKENS` (0 = off) | `finish_reason="token_budget"` |
+| Approvals | `NOUR_CODE_APPROVAL_TIMEOUT_SECONDS` (300) | proposal rejected |
 
 ## 8. Built-in tools
 
