@@ -287,7 +287,7 @@ class HealthResponse(BaseModel):
 
     status: Literal["ok", "degraded", "down"] = "ok"
     app: str = "nour-code"
-    version: str = "1.0.0"
+    version: str = "1.2.0"
     uptime_seconds: float = 0.0
     ollama_reachable: bool = False
     ollama_url: str = ""
