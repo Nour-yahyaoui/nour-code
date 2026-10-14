@@ -160,8 +160,15 @@ PLACEHOLDER_REGEX = re.compile(
 
 
 def detect_production_mode(message: str) -> bool:
-    """True when the user is asking for production-grade output."""
-    return bool(PRODUCTION_REGEX.search(message or ""))
+    """True when the user is asking for production-grade output.
+
+    Whitespace runs are collapsed first so "production   ready", "production\nready"
+    and double-spaced sentences all match the same trigger.
+    """
+    if not message:
+        return False
+    normalised = re.sub(r"\s+", " ", message).strip()
+    return bool(PRODUCTION_REGEX.search(normalised))
 
 
 PRODUCTION_INSTRUCTION = """## PRODUCTION-READY MODE (active for this turn)
