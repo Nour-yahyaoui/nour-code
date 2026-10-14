@@ -308,3 +308,44 @@ def test_unhandled_errors_are_json(settings, monkeypatch: pytest.MonkeyPatch) ->
         response = test_client.post("/chat/sync", json={"message": "hi"})
     assert response.status_code == 500
     assert response.json()["code"] == "internal_error"
+
+
+# ---------------------------------------------------------------------------
+# workspace listing
+# ---------------------------------------------------------------------------
+def test_files_lists_the_working_dir(client, sandbox: Path) -> None:
+    test_client, _, _ = client
+    (sandbox / "shown.txt").write_text("x")
+    (sandbox / "nested").mkdir()
+    (sandbox / "nested" / "deep.py").write_text("y")
+
+    body = test_client.get("/files").json()
+    names = {entry["name"]: entry["type"] for entry in body["entries"]}
+    assert names["shown.txt"] == "file"
+    assert names["nested"] == "dir"
+    assert body["count"] == len(body["entries"])
+
+
+def test_files_recursive_includes_nested_files(client, sandbox: Path) -> None:
+    test_client, _, _ = client
+    (sandbox / "nested").mkdir()
+    (sandbox / "nested" / "deep.py").write_text("y")
+
+    body = test_client.get("/files?recursive=true").json()
+    assert any(entry["name"].endswith("deep.py") for entry in body["entries"])
+
+
+def test_files_rejects_paths_outside_the_roots(client, tmp_path: Path) -> None:
+    test_client, _, _ = client
+    outside = tmp_path.parent / "definitely-outside"
+    response = test_client.get("/files", params={"path": str(outside)})
+    assert response.status_code in {400, 403}
+
+
+def test_files_respects_the_limit(client, sandbox: Path) -> None:
+    test_client, _, _ = client
+    for index in range(5):
+        (sandbox / f"f{index}.txt").write_text("x")
+    body = test_client.get("/files?limit=2").json()
+    assert body["count"] == 2
+    assert body["truncated"] is True

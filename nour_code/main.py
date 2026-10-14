@@ -34,6 +34,8 @@ from .models import (
     ChatResponse,
     DeleteSessionResponse,
     ErrorResponse,
+    FileEntry,
+    FileListResponse,
     HealthResponse,
     ReloadSkillsResponse,
     SessionListResponse,
@@ -487,6 +489,70 @@ def _register_routes(app: FastAPI) -> None:
             resolved=1,
             pending=gate.pending,
             detail=f"{payload.proposal_id} {decision}d",
+        )
+
+    @app.get("/files", response_model=FileListResponse, summary="List the workspace (read-only)")
+    async def list_files(container: ContainerDep, path: str = ".", recursive: bool = False, limit: int = 300) -> FileListResponse:
+        try:
+            root = container.permissions.resolve_path(path, must_exist=True, kind="dir")
+        except PermissionDeniedError as exc:
+            raise HTTPException(status_code=403, detail=f"path rejected: {exc}") from exc
+
+        cap = max(1, min(limit, 2_000))
+        entries: list[FileEntry] = []
+        truncated = False
+        try:
+            children = sorted(root.iterdir(), key=lambda candidate: candidate.name)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"cannot list {path!r}: {exc}") from exc
+
+        for child in children:
+            if len(entries) >= cap:
+                truncated = True
+                break
+            try:
+                is_dir = child.is_dir()
+                stat = child.stat()
+            except OSError:
+                continue
+            entries.append(
+                FileEntry(
+                    name=child.name,
+                    path=str(child),
+                    type="dir" if is_dir else "file",
+                    size=0 if is_dir else stat.st_size,
+                    modified=round(stat.st_mtime, 3),
+                )
+            )
+            if is_dir and recursive and child.name not in {".git", "node_modules", "__pycache__", ".venv"}:
+                try:
+                    for nested in sorted(child.rglob("*")):
+                        if len(entries) >= cap:
+                            truncated = True
+                            break
+                        try:
+                            nested_dir = nested.is_dir()
+                            nested_stat = nested.stat()
+                        except OSError:
+                            continue
+                        entries.append(
+                            FileEntry(
+                                name=str(nested.relative_to(root)),
+                                path=str(nested),
+                                type="dir" if nested_dir else "file",
+                                size=0 if nested_dir else nested_stat.st_size,
+                                modified=round(nested_stat.st_mtime, 3),
+                            )
+                        )
+                except OSError:
+                    continue
+
+        return FileListResponse(
+            root=str(container.settings.working_dir),
+            path=str(root),
+            count=len(entries),
+            truncated=truncated,
+            entries=entries,
         )
 
     @app.get("/health", response_model=HealthResponse, summary="Ollama + model health")
