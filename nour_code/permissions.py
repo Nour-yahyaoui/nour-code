@@ -53,8 +53,13 @@ _WIN_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
-class PermissionDeniedError(Exception):
-    """Raised when an operation is outside the configured permission scope."""
+class PermissionDeniedError(PermissionError):
+    """Raised when an operation is outside the configured permission scope.
+
+    Deriving from :class:`PermissionError` (itself an :class:`OSError`) lets
+    skills and tools catch it with a plain ``except PermissionError``, while
+    callers that need the structured reason can still read ``.code``.
+    """
 
     def __init__(self, reason: str, *, code: str = "permission_denied", detail: str | None = None) -> None:
         super().__init__(reason)
