@@ -1,0 +1,19 @@
+# nour-code — pinned runtime dependencies (Python 3.11+)
+#
+#   pip install -r requirements.txt
+#   pip install -r requirements-dev.txt   # for the test suite
+#
+# Everything below is pinned to an exact version so that local runs, CI and the
+# Docker image resolve to the same dependency graph.
+
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+pydantic==2.14.1
+pydantic-settings==2.15.0
+PyYAML==6.0.3
+anyio==4.15.1
+
+# Optional but recommended: enables GET /metrics (Prometheus exposition format).
+# If it is not installed, nour-code starts normally and /metrics returns 503.
+prometheus-client==0.26.0

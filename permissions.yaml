@@ -1,0 +1,89 @@
+# ---------------------------------------------------------------------------
+# nour-code permission scope
+# ---------------------------------------------------------------------------
+# Loaded once at startup by nour_code/permissions.py and consulted before every
+# single filesystem, shell and patch operation.  Nothing in the agent can
+# bypass this file: the tool layer verifies the caller *and* the resolved path.
+#
+# Override the whole file with:  NOUR_CODE_PERMISSIONS_FILE=/path/to/other.yaml
+# Override just the roots with:  NOUR_CODE_ALLOWED_ROOTS=/srv/app:/home/me/code
+#
+# Notes / assumptions (see README "Permissions" section):
+#   * allowed_roots entries that do not exist on this machine are skipped at
+#     load time.  The two Windows roots below are the defaults requested by the
+#     spec; on Linux/macOS they are skipped and nour-code falls back to the
+#     process working directory + <repo>/sandbox (logged as a warning).
+#   * A path is only usable if it resolves (symlinks followed) to a location
+#     *inside* one of the allowed roots.  `..`, absolute paths outside the
+#     roots, and symlinks that escape the roots are all rejected.
+# ---------------------------------------------------------------------------
+
+version: 1
+
+# ---- filesystem -----------------------------------------------------------
+allowed_roots:
+  - C:/Users/HP/projects
+  - C:/Users/HP/sandbox
+  # POSIX examples (uncomment and adapt, or set NOUR_CODE_ALLOWED_ROOTS):
+  # - /home/user/projects
+  # - /home/user/nour-code/sandbox
+
+filesystem:
+  # Hard cap on a single read_file() payload (characters).
+  max_read_bytes: 1000000
+  # Hard cap on the content of a single write_file() call (characters).
+  max_write_bytes: 2000000
+  # Globs that are never readable / writable, even inside an allowed root.
+  denied_globs:
+    - "**/.ssh/id_rsa"
+    - "**/.ssh/id_ed25519"
+    - "**/*.pem"
+    - "**/.env"
+  # Directories skipped by list_directory()/search_files() walks.
+  ignore_dirs:
+    - .git
+    - node_modules
+    - __pycache__
+    - .venv
+    - venv
+    - dist
+    - build
+    - target
+    - .next
+    - .mypy_cache
+    - .pytest_cache
+
+# ---- shell ----------------------------------------------------------------
+shell:
+  # Only these executables may be launched (matched on the first token of the
+  # command, after stripping a Windows-style ".exe" suffix).
+  allowed_commands: [npm, npx, node, cargo, git, python, pip, docker]
+  # Case-insensitive regular expressions; if ANY of them matches anywhere in
+  # the command line the call is refused before a process is spawned.
+  #
+  # Gotcha: the literal pattern "format" (required by the spec) also matches
+  # `git log --format=...`.  Swap it for the anchored regex below if you want
+  # `git --format` back:
+  #   - "(^|\\s)(format|mkfs)(\\s|$)"
+  denied_patterns:
+    - "rm -rf"
+    - "format"
+    - "del /f /s /q C:"
+  default_timeout_seconds: 60
+  max_timeout_seconds: 600
+
+# ---- network --------------------------------------------------------------
+network:
+  # When false, tools/skills that reach the internet (npm audit, pip install,
+  # docker pull ...) are refused instead of silently hanging.
+  allow_outbound: true
+
+# ---- per-tool kill switches -----------------------------------------------
+tools:
+  delete_file: false      # destructive: opt-in
+  run_shell: true
+  read_file: true
+  write_file: true
+  list_directory: true
+  search_files: true
+  apply_patch: true

@@ -1,0 +1,35 @@
+# nour-code + host Ollama.
+#
+#   docker compose up --build
+#
+# Ollama itself is NOT containerised here: the agent talks to the daemon
+# already running on the host via host.docker.internal (host-gateway).
+services:
+  nour-code:
+    build: .
+    image: nour-code:latest
+    container_name: nour-code
+    environment:
+      NOUR_CODE_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      NOUR_CODE_MODEL: qwen3:8b
+      NOUR_CODE_LOG_LEVEL: INFO
+      NOUR_CODE_PORT: "8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Linux hosts need this mapping
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./permissions.yaml:/app/permissions.yaml:ro
+      - ./skills:/app/skills:ro
+      - nour-code-logs:/app/logs
+      # Mount the code you want the agent to work on, read+write:
+      # - ../projects:/data/projects
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  nour-code-logs:
