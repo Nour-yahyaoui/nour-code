@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nour-code"
+version = "1.0.0"
+description = "Local AI coding agent server: Qwen3 8B on Ollama with controlled filesystem, shell and skill access"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "nour-code contributors" }]
+keywords = ["ai", "agent", "ollama", "qwen", "fastapi", "coding-assistant", "llm"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development",
+]
+dependencies = [
+  "fastapi==0.143.0",
+  "uvicorn[standard]==0.54.0",
+  "httpx==0.28.1",
+  "pydantic==2.14.1",
+  "pydantic-settings==2.15.0",
+  "PyYAML==6.0.3",
+  "anyio==4.15.1",
+  "prometheus-client==0.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "ruff==0.9.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/Nour-yahyaoui/nour-code"
+Repository = "https://github.com/Nour-yahyaoui/nour-code"
+
+[project.scripts]
+nour-code = "nour_code.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["nour_code*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+nour_code = ["skills/*.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["nour_code", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+  "B008",   # FastAPI dependency injection uses function calls in defaults
+  "E501",   # long lines are handled by the formatter / intentional in prompts
+  "SIM108", # explicit ternaries read better in the tool handlers
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B017", "SIM300"]
+"nour_code/skills/*" = ["B023", "B007"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
