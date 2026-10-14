@@ -442,32 +442,42 @@ async def _check_secrets(
         for lineno, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
                 continue
+            hits: list[tuple[str, str, str, re.Match[str]]] = []
             for rule, severity, pattern, kind in SECRET_RULES:
                 for match in pattern.finditer(line):
-                    findings.append(
-                        _finding(
-                            rule=rule,
-                            severity=severity,
-                            path=file_path,
-                            line=lineno,
-                            snippet=line,
-                            advice=f"Rotate this {kind} immediately, remove it from the repository, "
-                            "and load it from the environment or a secret manager.",
-                            evidence=_redact(match.group(0)),
-                            secret_kind=kind,
-                        )
+                    hits.append((rule, severity, kind, match))
+
+            # Never echo a secret back: redact every hit inside the snippet too.
+            redacted_line = line
+            for _rule, _severity, _kind, match in hits:
+                redacted_line = redacted_line.replace(match.group(0), _redact(match.group(0)))
+
+            for rule, severity, kind, match in hits:
+                findings.append(
+                    _finding(
+                        rule=rule,
+                        severity=severity,
+                        path=file_path,
+                        line=lineno,
+                        snippet=redacted_line,
+                        advice=f"Rotate this {kind} immediately, remove it from the repository, "
+                        "and load it from the environment or a secret manager.",
+                        evidence=_redact(match.group(0)),
+                        secret_kind=kind,
                     )
+                )
             if allow_entropy:
                 for match in HIGH_ENTROPY_RE.finditer(line):
                     candidate = match.group(1)
                     if _shannon_entropy(candidate) >= entropy_threshold and not candidate.startswith(("http", "sha", "eyJ")):
+                        redacted_line = redacted_line.replace(candidate, _redact(candidate))
                         findings.append(
                             _finding(
                                 rule="high-entropy-literal",
                                 severity="low",
                                 path=file_path,
                                 line=lineno,
-                                snippet=line,
+                                snippet=redacted_line,
                                 advice="High-entropy string; if it is a credential move it to the "
                                 "environment and rotate it.",
                                 evidence=_redact(candidate),
