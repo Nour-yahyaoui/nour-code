@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from nour_code.prompts import (
     CHECKLIST_ITEMS,
     PLACEHOLDER_REGEX,
@@ -19,6 +18,7 @@ from nour_code.prompts import (
     render_file_listing,
     skill_trigger_hint,
 )
+
 
 # ---------------------------------------------------------------------------
 # stack detection

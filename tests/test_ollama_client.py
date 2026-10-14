@@ -7,7 +7,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from nour_code.models import ChatMessage
 from nour_code.ollama_client import (
     ChatResult,

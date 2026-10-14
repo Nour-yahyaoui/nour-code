@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from nour_code.config import Settings
 from nour_code.observability import AuditLog, JsonFormatter, Metrics, hash_args, setup_logging
 
