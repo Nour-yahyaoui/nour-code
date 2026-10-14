@@ -68,6 +68,10 @@ class ChatRequest(BaseModel):
     system_extra: str | None = Field(
         default=None, max_length=20_000, description="Extra instructions appended to the system prompt."
     )
+    approval: Literal["off", "mutating", "all"] | None = Field(
+        default=None,
+        description="Ask for human approval before executing mutating (or all) tool calls.",
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("message")

@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     verify_timeout_seconds: int = Field(default=180, ge=1, description="Timeout for the verification command.")
     plan_mode: str = Field(default="auto", description="off | auto | on — ask for a plan before acting.")
     max_concurrent_turns: int = Field(default=4, ge=1, description="Parallel agent turns allowed (0 = unlimited).")
+    approval_mode: str = Field(
+        default="off",
+        description="off | mutating | all — ask a human before executing tools that change things.",
+    )
+    approval_timeout_seconds: float = Field(default=300.0, gt=0, description="How long a proposal waits for a human.")
     max_tool_output_chars: int = Field(default=100_000, ge=1_000)
     max_tool_history_chars: int = Field(default=20_000, ge=1_000)
     max_history_messages: int = Field(default=200, ge=4)
@@ -146,6 +151,15 @@ class Settings(BaseSettings):
         lowered = (value or "auto").strip().lower()
         if lowered not in allowed:
             raise ValueError(f"plan_mode must be one of {sorted(allowed)}")
+        return lowered
+
+    @field_validator("approval_mode")
+    @classmethod
+    def _lower_approval_mode(cls, value: str) -> str:
+        allowed = {"off", "mutating", "all"}
+        lowered = (value or "off").strip().lower()
+        if lowered not in allowed:
+            raise ValueError(f"approval_mode must be one of {sorted(allowed)}")
         return lowered
 
     @field_validator("stop")
@@ -265,6 +279,7 @@ class Settings(BaseSettings):
             "plan_mode": self.plan_mode,
             "verify_default": self.verify_default,
             "max_concurrent_turns": self.max_concurrent_turns,
+            "approval_mode": self.approval_mode,
             "max_tool_output_chars": self.max_tool_output_chars,
             "working_dir": str(self.working_dir),
             "permissions_file": str(self.permissions_file),
