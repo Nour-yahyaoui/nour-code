@@ -669,7 +669,7 @@ offline work.
 ```bash
 pip install -r requirements-dev.txt
 
-pytest                       # 268 tests
+pytest                       # 267 tests
 pytest -k security           # one area
 pytest --tb=short -q         # terse failures
 
@@ -711,7 +711,7 @@ nour-code/
 │   └── version_check.py     # Python 3.11 guard
 ├── static/
 │   └── console.html         # browser console (resizable panes + live events)
-├── tests/                   # 268 tests, no network required
+├── tests/                   # 267 tests, no network required
 ├── permissions.yaml
 ├── requirements.txt         # pinned versions
 ├── requirements-dev.txt
