@@ -289,27 +289,6 @@ class Agent:
                         )
                     session.add(ChatMessage.tool_result(call_id, name, rendered))
 
-            if emit is not None and result.status == "ok" and name in FILE_MUTATING_TOOLS:
-                target = _first_path(arguments)
-                if target:
-                    try:
-                        resolved = self.permissions.resolve_path(target, kind="any")
-                    except PermissionDeniedError:
-                        resolved = None
-                    if resolved is not None:
-                        action = "deleted" if name == "delete_file" else ("created" if not resolved.exists() else "modified")
-                        await emit(
-                            StreamEvent(
-                                type="file_change",
-                                data={
-                                    "tool": name,
-                                    "path": str(resolved),
-                                    "action": action,
-                                    "iteration": iteration,
-                                    "call_id": call_id,
-                                },
-                            )
-                        )
                     continue
 
             if parse_error is not None:
@@ -359,6 +338,27 @@ class Agent:
                     )
                 )
             session.add(ChatMessage.tool_result(call_id, name, rendered))
+            if emit is not None and result.status == "ok" and name in FILE_MUTATING_TOOLS:
+                target = _first_path(arguments)
+                if target:
+                    try:
+                        resolved = self.permissions.resolve_path(target, kind="any")
+                    except PermissionDeniedError:
+                        resolved = None
+                    if resolved is not None:
+                        action = "deleted" if name == "delete_file" else ("created" if not resolved.exists() else "modified")
+                        await emit(
+                            StreamEvent(
+                                type="file_change",
+                                data={
+                                    "tool": name,
+                                    "path": str(resolved),
+                                    "action": action,
+                                    "iteration": iteration,
+                                    "call_id": call_id,
+                                },
+                            )
+                        )
 
     # -- approvals ----------------------------------------------------------
     def _needs_approval(self, tool: str, state: TurnState) -> bool:
