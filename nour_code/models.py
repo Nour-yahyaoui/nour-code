@@ -50,6 +50,24 @@ class ChatRequest(BaseModel):
         default=None,
         description="Force production-ready mode on/off instead of auto-detecting it.",
     )
+    # --- 1.2.0: per-request overrides ------------------------------------
+    model: str | None = Field(default=None, description="Override the model for this turn only.")
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0, description="Override the sampling temperature.")
+    seed: int | None = Field(default=None, description="Override the sampler seed for reproducible runs.")
+    tools: list[str] | None = Field(
+        default=None, description="Restrict this turn to this allow-list of tool names."
+    )
+    verify: bool | None = Field(
+        default=None,
+        description="Run the project's test/lint command after the turn. Defaults to NOUR_CODE_VERIFY_DEFAULT.",
+    )
+    plan: bool | None = Field(
+        default=None,
+        description="Ask the model for a short plan before acting. Defaults to NOUR_CODE_PLAN_MODE.",
+    )
+    system_extra: str | None = Field(
+        default=None, max_length=20_000, description="Extra instructions appended to the system prompt."
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("message")
