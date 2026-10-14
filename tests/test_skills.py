@@ -194,7 +194,7 @@ async def test_security_scan_flags_dangerous_patterns(container, sandbox: Path) 
 
 
 async def test_security_scan_respects_severity_threshold(container, sandbox: Path) -> None:
-    (sandbox / "a.py").write_text("url = 'http://example.com'\n")
+    (sandbox / "a.py").write_text("url = 'http://internal-api.local'\n")
     low = await invoke(container, "security_scan", path=str(sandbox), severity_threshold="low")
     critical = await invoke(container, "security_scan", path=str(sandbox), severity_threshold="critical")
     assert low.output["summary"]["total"] >= 1
@@ -203,7 +203,7 @@ async def test_security_scan_respects_severity_threshold(container, sandbox: Pat
 
 async def test_check_secrets_finds_aws_key_and_redacts(container, sandbox: Path) -> None:
     (sandbox / "config.py").write_text(
-        'AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"\n'
+        'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"\n'
         'password = "sup3rs3cretvalue"\n'
     )
     result = await invoke(container, "check_secrets", path=str(sandbox))
