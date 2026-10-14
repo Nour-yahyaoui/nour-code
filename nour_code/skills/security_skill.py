@@ -314,10 +314,11 @@ async def _read_text(path: Path) -> str | None:
 
 
 def _resolve(ctx: dict[str, Any], raw: str, *, kind: str = "any") -> Path:
+    """Resolve a path that may be a file or a directory."""
     permissions = ctx.get("permissions")
     if permissions is None:  # pragma: no cover - wiring guarantee
         raise RuntimeError("permissions unavailable in skill context")
-    return permissions.resolve_path(raw, must_exist=True, kind="dir" if kind == "dir" else "file")
+    return permissions.resolve_path(raw, must_exist=True, kind=kind)
 
 
 def _finding(
