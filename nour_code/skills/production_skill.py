@@ -188,6 +188,18 @@ def _indent_of(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
 
 
+def _edit_order(items: list[tuple[int, Any]]) -> list[tuple[int, int, Any]]:
+    """Order edits for a bottom-up, single-pass rewrite.
+
+    Sorts by line index descending (so earlier indices stay valid) and, for
+    equal indices, by declaration order descending (so the first declared edit
+    ends up first in the output).  Returns ``(index, position, payload)``.
+    """
+    decorated = [(index, position, payload) for position, (index, payload) in enumerate(items)]
+    decorated.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return decorated
+
+
 def insert_lines(lines: list[str], insertions: list[tuple[int, list[str]]]) -> list[str]:
     """Apply ``(line_index, [new lines])`` pairs in a single stable pass.
 
@@ -197,7 +209,7 @@ def insert_lines(lines: list[str], insertions: list[tuple[int, list[str]]]) -> l
     one is applied first, which keeps the declared order in the output.
     """
     result = list(lines)
-    for index, block in sorted(reversed(insertions), key=lambda pair: pair[0], reverse=True):
+    for index, _position, block in _edit_order(insertions):
         index = max(0, min(index, len(result)))
         result[index:index] = block
     return result
@@ -814,7 +826,9 @@ def apply_edits(lines: list[str], edits: list[tuple[int, int, list[str]]]) -> li
     from an AST/source scan without compensating for earlier edits.
     """
     result = list(lines)
-    for start, removed, block in sorted(reversed(edits), key=lambda edit: edit[0], reverse=True):
+    for start, _position, (removed, block) in _edit_order(
+        [(start, (removed, block)) for start, removed, block in edits]
+    ):
         start = max(0, min(start, len(result)))
         result[start : start + removed] = block
     return result
