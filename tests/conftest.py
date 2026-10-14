@@ -224,3 +224,21 @@ async def registry_container(settings: Settings) -> AsyncIterator[tuple[ToolRegi
 @pytest.fixture
 def fake_model() -> FakeModel:
     return FakeModel()
+
+
+@pytest.fixture
+def client(settings: Settings):
+    """HTTP test client plus the wired container and its FakeModel.
+
+    Defined here (not in ``test_api.py``) so every test module can drive the real
+    API surface: ``test_client, container, fake = client``.
+    """
+    from fastapi.testclient import TestClient
+    from nour_code.main import create_app
+
+    app = create_app(settings)
+    with TestClient(app) as test_client:
+        fake = FakeModel([{"content": "hello from the model"}])
+        app.state.container.client = fake
+        app.state.container.agent.client = fake
+        yield test_client, app.state.container, fake
