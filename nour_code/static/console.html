@@ -543,7 +543,8 @@ function pushEvent(type, payload) {
 
 function updateStats() {
   const elapsed = state.startedAt ? (Date.now() - state.startedAt) / 1000 : 0;
-  $('stats').textContent = `${state.events.length} events · ${state.toolCalls} tools · ${elapsed.toFixed(1)}s`;
+  const tokens = state.usage ? ` · ${state.usage.total_tokens} tok` : '';
+  $('stats').textContent = `${state.events.length} events · ${state.toolCalls} tools${tokens} · ${elapsed.toFixed(1)}s`;
 }
 
 /* -------------------------------------------------------------- inspector */
@@ -790,6 +791,52 @@ function renderTurnMeta(response) {
   autoScrollTranscript();
 }
 
+async function refreshFiles() {
+  const view = $('filesView');
+  try {
+    const response = await fetch('/files?recursive=true&limit=400');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    state.files = data.entries || [];
+    if (state.tab === 'files') renderFiles(data);
+  } catch (err) {
+    view.textContent = '';
+    view.appendChild(el('div', 'empty', `cannot list the workspace: ${err}`));
+  }
+}
+
+function renderFiles(data) {
+  const view = $('filesView');
+  view.textContent = '';
+  view.appendChild(el('div', 'path-head', data.path || ''));
+
+  const toolbar = el('div', 'actions');
+  const refresh = el('button', 'ghost', 'refresh');
+  refresh.addEventListener('click', refreshFiles);
+  toolbar.appendChild(refresh);
+  if (data.truncated) toolbar.appendChild(el('span', 'pill warn', 'listing truncated'));
+  toolbar.appendChild(el('span', 'hint', 'click a file to paste its name'));
+  view.appendChild(toolbar);
+
+  if (!data.entries || !data.entries.length) {
+    view.appendChild(el('div', 'empty', 'the workspace is empty'));
+    return;
+  }
+  const freshAfter = Date.now() / 1000 - 600; // touched in the last 10 minutes
+  data.entries.forEach((entry) => {
+    const row = el('div', `file ${entry.type}${entry.modified > freshAfter ? ' fresh' : ''}`.trim());
+    const label = el('span', 'name', `${entry.type === 'dir' ? '\u{1f4c1}' : '\u{1f4c4}'} ${entry.name}`);
+    label.addEventListener('click', () => {
+      const box = $('message');
+      box.value = `${box.value}${box.value && !box.value.endsWith(' ') ? ' ' : ''}${entry.name}`;
+      box.focus();
+    });
+    row.appendChild(label);
+    row.appendChild(el('span', 'meta', entry.type === 'dir' ? '' : `${entry.size} B`));
+    view.appendChild(row);
+  });
+}
+
 /* ------------------------------------------------------------------ tabs */
 function setTab(name) {
   state.tab = name;
@@ -797,8 +844,10 @@ function setTab(name) {
   $('eventsView').classList.toggle('hidden', name !== 'events');
   $('timelineView').classList.toggle('hidden', name !== 'timeline');
   $('skillsView').classList.toggle('hidden', name !== 'skills');
+  $('filesView').classList.toggle('hidden', name !== 'files');
   if (name === 'timeline') renderTimeline();
   if (name === 'skills') renderSkills();
+  if (name === 'files') refreshFiles();
 }
 
 function renderTimeline() {
@@ -897,6 +946,7 @@ function startTimer() {
 
 function stopTimer() {
   clearInterval(state.ticker);
+  updateStats();
   state.ticker = null;
   updateStats();
 }
@@ -1035,6 +1085,7 @@ async function streamMessage() {
     setBusy(false);
     finishTurn();
     state.controller = null;
+    refreshFiles();
   }
 }
 
@@ -1086,6 +1137,7 @@ async function syncMessage() {
     stopTimer();
     setBusy(false);
     finishTurn();
+    refreshFiles();
   }
 }
 
@@ -1148,10 +1200,20 @@ function wire() {
     }
   });
 
+  $('showThinking').checked = state.showThinking;
+  $('showThinking').addEventListener('change', (event) => {
+    state.showThinking = event.target.checked;
+    localStorage.setItem('nour.ui.showThinking', state.showThinking ? '1' : '0');
+    document.querySelectorAll('details.thinking').forEach((node) => { node.open = state.showThinking; });
+  });
+
   $('clearConsole').addEventListener('click', () => {
     state.events = [];
     state.seq = 0;
     state.toolCalls = 0;
+    state.toolIds = new Set();
+    state.proposals = new Map();
+    state.usage = null;
     rebuildEventLog();
     updateStats();
   });
@@ -1184,6 +1246,7 @@ function wire() {
 
   refreshStatus();
   setInterval(refreshStatus, 30000);
+  refreshFiles();
 }
 
 if (document.readyState === 'loading') {
