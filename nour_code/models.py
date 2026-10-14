@@ -195,6 +195,30 @@ class ChatMessage(BaseModel):
         return payload
 
 
+class ApprovalRequest(StrictModel):
+    """Body of ``POST /sessions/{id}/approve``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: str | None = Field(default=None, description="Which proposal to resolve (omit when using all).")
+    decision: Literal["approve", "reject", "approve_all", "reject_all"] = "approve"
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class ApprovalResponse(StrictModel):
+    """Result of an approval decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool = True
+    session_id: str = ""
+    proposal_id: str | None = None
+    decision: str = ""
+    resolved: int = 0
+    pending: list[dict[str, Any]] = Field(default_factory=list)
+    detail: str = ""
+
+
 # ---------------------------------------------------------------------------
 # SSE
 # ---------------------------------------------------------------------------
