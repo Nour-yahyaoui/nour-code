@@ -217,7 +217,7 @@
   .wait .spin { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .line { font-size: 12.5px; }
+  .line { font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
   .line.err { color: var(--err); }
   .line.warn { color: var(--warn); }
 
@@ -306,6 +306,7 @@
   <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8V15a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8V15a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/></symbol>
   <symbol id="i-stream" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 9v5M12 17h.01"/></symbol>
 </svg>
 
 <header class="topbar">
@@ -679,7 +680,7 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
       const box = document.querySelector(`.proposal[data-proposal-id="${id}"]`);
       if (!box) continue;
       const status = box.querySelector('.status');
-      if (status) status.textContent = 'executed';
+      if (status) status.textContent = data.status === 'ok' ? 'executed' : 'not run — the tool was rejected';
       state.proposals.delete(id);
       break;
     }
@@ -734,14 +735,20 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
   function renderWarning(data) {
     const turn = state.turn;
     if (!turn) return;
-    turn.cards.appendChild(el('div', 'line warn', '⚠ ' + (data.message || JSON.stringify(data))));
+    const line = el('div', 'line warn');
+    line.appendChild(icon('alert', 'i-sm'));
+    line.appendChild(el('span', null, data.message || JSON.stringify(data)));
+    turn.cards.appendChild(line);
     turn.empty = false;
   }
 
   function renderError(data) {
     const turn = state.turn;
     if (!turn) return;
-    turn.cards.appendChild(el('div', 'line err', '✖ ' + (data.message || data.code || 'error')));
+    const line = el('div', 'line err');
+    line.appendChild(icon('x', 'i-sm'));
+    line.appendChild(el('span', null, (data.message || data.code || 'error')));
+    turn.cards.appendChild(line);
     turn.empty = false;
   }
 
@@ -804,7 +811,12 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
         turn.text.appendChild(el('span', 'empty-note', '(no text returned — check the thinking block and the stream)'));
       }
       if (data && data.response && data.response.warnings && data.response.warnings.length) {
-        data.response.warnings.forEach((warning) => turn.cards.appendChild(el('div', 'line warn', '⚠ ' + warning)));
+        data.response.warnings.forEach((warning) => {
+          const line = el('div', 'line warn');
+          line.appendChild(icon('alert', 'i-sm'));
+          line.appendChild(el('span', null, warning));
+          turn.cards.appendChild(line);
+        });
       }
     }
     state.turn = null;
@@ -895,11 +907,19 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
         pushEvent('warning', { message: 'stopped by user', ts: Date.now() / 1000 });
         if (state.turn) {
           state.turn.stopped = true;
-          state.turn.text.appendChild(el('span', 'empty-note', '■ stopped'));
+          const note = el('span', 'empty-note');
+          note.appendChild(icon('stop', 'i-sm'));
+          note.appendChild(el('span', null, ' stopped'));
+          state.turn.text.appendChild(note);
         }
       } else {
         pushEvent('error', { code: 'client_error', message: String(err), ts: Date.now() / 1000 });
-        if (state.turn) state.turn.cards.appendChild(el('div', 'line err', '✖ ' + err));
+        if (state.turn) {
+          const line = el('div', 'line err');
+          line.appendChild(icon('x', 'i-sm'));
+          line.appendChild(el('span', null, String(err)));
+          state.turn.cards.appendChild(line);
+        }
       }
     } finally {
       finishTurn(null);
