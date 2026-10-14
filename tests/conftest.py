@@ -17,8 +17,8 @@ import pytest_asyncio
 from nour_code.agent import Agent
 from nour_code.config import PROJECT_ROOT, Settings
 from nour_code.main import Container
-from nour_code.models import ChatMessage, StreamChunk, ToolCall, Usage
-from nour_code.ollama_client import ChatResult
+from nour_code.models import ChatMessage, FunctionCall, ToolCall, Usage
+from nour_code.ollama_client import ChatResult, StreamChunk
 from nour_code.sessions import SessionStore
 from nour_code.skills import SkillsManager
 from nour_code.tools import ToolRegistry
