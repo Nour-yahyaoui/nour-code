@@ -195,9 +195,16 @@ class ChatMessage(BaseModel):
 # ---------------------------------------------------------------------------
 EventType = Literal[
     "token",
+    "thinking",      # 1.2.0: the model's chain of thought (Qwen3 thinking mode)
     "tool_call",
     "tool_result",
+    "tool_proposal",  # 1.2.0: a mutating call waiting for human approval
     "skill_loaded",
+    "plan",           # 1.2.0: the ordered plan for this turn
+    "usage",          # 1.2.0: token accounting after a model call
+    "verification",   # 1.2.0: result of the project test/lint command
+    "file_change",    # 1.2.0: a file that was created, modified or deleted
+    "warning",
     "error",
     "done",
 ]
