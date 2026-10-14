@@ -292,7 +292,17 @@ class ToolRegistry:
                         self._skill_dispatcher(name, args, ctx),
                         timeout=self.settings.skill_tool_timeout_seconds,
                     )
-                    result = self._coerce_payload(payload)
+                    if isinstance(payload, dict) and payload.get("ok") is False:
+                        # The skill ran but reports a failure: surface it as a tool error
+                        # while keeping the structured payload for the model.
+                        result = ToolResult(
+                            ok=False,
+                            status="error",
+                            output=payload,
+                            error=str(payload.get("error") or "skill reported a failure"),
+                        )
+                    else:
+                        result = self._coerce_payload(payload)
             else:
                 payload = await asyncio.wait_for(
                     spec.handler(parsed, ctx),
