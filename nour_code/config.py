@@ -76,11 +76,36 @@ class Settings(BaseSettings):
     num_ctx: int = Field(default=16384, ge=512)
     num_predict: int | None = Field(default=None, ge=1)
     seed: int | None = None
+    # --- 1.2.0 sampling controls -----------------------------------------
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_k: int | None = Field(default=None, ge=1)
+    repeat_penalty: float | None = Field(default=None, ge=0.0, le=2.0)
+    presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
+    frequency_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
+    stop: str | None = Field(default=None, description="Comma separated stop sequences.")
+    enable_thinking: bool | None = Field(
+        default=None, description="Qwen3 thinking mode (sent as options.enable_thinking)."
+    )
     max_model_retries: int = Field(default=2, ge=0, le=5)
     retry_backoff_seconds: float = Field(default=1.0, ge=0.0)
 
     # ---- agent loop -----------------------------------------------------
     max_iterations: int = Field(default=15, ge=1, le=100)
+    # --- 1.2.0 loop guards -------------------------------------------------
+    max_turn_seconds: float = Field(default=900.0, gt=0, description="Wall-clock budget for one turn.")
+    max_turn_tokens: int = Field(
+        default=0, ge=0, description="Token budget for one turn (0 = unlimited)."
+    )
+    tool_repair_attempts: int = Field(
+        default=2, ge=0, le=5, description="How often a malformed tool call is fed back for repair."
+    )
+    loop_detection_threshold: int = Field(
+        default=3, ge=2, le=10, description="Identical tool calls in a row that count as a loop."
+    )
+    verify_default: bool = Field(default=False, description="Run the project checks after every turn.")
+    verify_timeout_seconds: int = Field(default=180, ge=1, description="Timeout for the verification command.")
+    plan_mode: str = Field(default="auto", description="off | auto | on — ask for a plan before acting.")
+    max_concurrent_turns: int = Field(default=4, ge=1, description="Parallel agent turns allowed (0 = unlimited).")
     max_tool_output_chars: int = Field(default=100_000, ge=1_000)
     max_tool_history_chars: int = Field(default=20_000, ge=1_000)
     max_history_messages: int = Field(default=200, ge=4)
@@ -114,6 +139,21 @@ class Settings(BaseSettings):
     skill_tool_timeout_seconds: float = Field(default=180.0, gt=0)
 
     # -- validators -------------------------------------------------------
+    @field_validator("plan_mode")
+    @classmethod
+    def _lower_plan_mode(cls, value: str) -> str:
+        allowed = {"off", "auto", "on"}
+        lowered = (value or "auto").strip().lower()
+        if lowered not in allowed:
+            raise ValueError(f"plan_mode must be one of {sorted(allowed)}")
+        return lowered
+
+    @field_validator("stop")
+    @classmethod
+    def _clean_stop(cls, value: str | None) -> str | None:
+        cleaned = (value or "").strip()
+        return cleaned or None
+
     @field_validator("log_level")
     @classmethod
     def _upper_level(cls, value: str) -> str:
@@ -203,6 +243,10 @@ class Settings(BaseSettings):
         return origins or ["*"]
 
     @property
+    def stop_sequences(self) -> list[str]:
+        return _split_str(self.stop)
+
+    @property
     def sandbox_dir(self) -> Path:
         return PROJECT_ROOT / "sandbox"
 
@@ -217,6 +261,10 @@ class Settings(BaseSettings):
             "num_ctx": self.num_ctx,
             "temperature": self.temperature,
             "max_iterations": self.max_iterations,
+            "max_turn_seconds": self.max_turn_seconds,
+            "plan_mode": self.plan_mode,
+            "verify_default": self.verify_default,
+            "max_concurrent_turns": self.max_concurrent_turns,
             "max_tool_output_chars": self.max_tool_output_chars,
             "working_dir": str(self.working_dir),
             "permissions_file": str(self.permissions_file),
