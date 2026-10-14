@@ -126,16 +126,22 @@ async def test_broken_skill_is_skipped(container, tmp_path: Path) -> None:
 async def test_duplicate_tool_names_are_rejected(container, tmp_path: Path) -> None:
     directory = tmp_path / "dup-skills"
     directory.mkdir()
-    schema = '''SKILL_NAME = "{name}"
+    schema = '''SKILL_NAME = "__NAME__"
 SKILL_DESCRIPTION = "dup"
-SKILL_TOOLS = [{{"type": "function", "function": {{"name": "shared_tool", "description": "x",
-    "parameters": {{"type": "object", "properties": {{}}}}}}}]]
+SKILL_TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "shared_tool",
+        "description": "x",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}]
 
 async def handle(tool_name, args, ctx):
-    return {{"ok": True}}
+    return {"ok": True}
 '''
-    (directory / "a_skill.py").write_text(schema.format(name="a_skill"))
-    (directory / "b_skill.py").write_text(schema.format(name="b_skill"))
+    (directory / "a_skill.py").write_text(schema.replace("__NAME__", "a_skill"))
+    (directory / "b_skill.py").write_text(schema.replace("__NAME__", "b_skill"))
     container.settings.skills_dirs = str(directory)
     report = await container.skills.reload()
     assert report.errors
