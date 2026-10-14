@@ -272,10 +272,11 @@ class PermissionManager:
         """Match a relative path against glob patterns, also trying its basename."""
         base = path_str.rsplit("/", 1)[-1]
         for pattern in patterns:
+            tail = pattern.rsplit("/", 1)[-1] if "/" in pattern else pattern
             if (
                 fnmatch.fnmatch(path_str, pattern)
                 or fnmatch.fnmatch(path_str, f"**/{pattern}")
-                or fnmatch.fnmatch(base, pattern)
+                or fnmatch.fnmatch(base, tail)
             ):
                 return pattern
         return None
