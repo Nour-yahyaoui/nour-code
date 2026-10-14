@@ -784,3 +784,194 @@ async def _add_logging(ctx: dict[str, Any], file_path: str, level: str = "info",
     if language == "python":
         return await _add_logging_python(ctx, path, source, level, dry_run)
     return await _add_logging_js(ctx, path, source, level, dry_run)
+
+
+# ---------------------------------------------------------------------------
+# add_error_handling
+# ---------------------------------------------------------------------------
+def apply_edits(lines: list[str], edits: list[tuple[int, int, list[str]]]) -> list[str]:
+    """Apply ``(start_index, num_removed, new_lines)`` edits bottom-up.
+
+    All indices refer to the *original* line list, so callers can compute them
+    from an AST/source scan without compensating for earlier edits.
+    """
+    result = list(lines)
+    for start, removed, block in sorted(edits, key=lambda edit: edit[0], reverse=True):
+        start = max(0, min(start, len(result)))
+        result[start : start + removed] = block
+    return result
+
+
+def _py_logger_edits(tree: ast.Module) -> list[tuple[int, int, list[str]]]:
+    """Edits that guarantee ``import logging`` + a module logger exist."""
+    edits: list[tuple[int, int, list[str]]] = []
+    if not _py_has_logging_import(tree):
+        edits.append((_py_import_insert_index(tree), 0, ["import logging", ""]))
+    if not _py_has_logger(tree):
+        edits.append((_py_import_insert_index(tree), 0, ["logger = logging.getLogger(__name__)", ""]))
+    return edits
+
+
+async def _add_error_handling_python(ctx: dict[str, Any], path: Path, source: str, dry_run: bool) -> dict[str, Any]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return {"ok": False, "error": f"cannot parse {path.name}: {exc.msg} (line {exc.lineno})"}
+
+    lines = source.splitlines()
+    edits: list[tuple[int, int, list[str]]] = []
+    wrapped: list[str] = []
+
+    for node in _py_functions(tree):
+        if _py_has_try(node) or not _py_is_risky(node):
+            continue
+        statements = _py_body_statements(node)
+        if not statements:
+            continue
+        first, last = statements[0], statements[-1]
+        if first.lineno == node.lineno:
+            continue  # one-liner body: not safe to wrap
+        start = first.lineno - 1
+        end = last.end_lineno or last.lineno
+        indent = _indent_of(lines[start])
+        body = ["    " + line if line.strip() else line for line in lines[start:end]]
+        block = (
+            [f"{indent}try:"]
+            + body
+            + [
+                f"{indent}except Exception as exc:",
+                f'{indent}    logger.error("{node.name}() failed: %s", exc, exc_info=True)',
+                f"{indent}    raise",
+            ]
+        )
+        edits.append((start, end - start, block))
+        wrapped.append(node.name)
+
+    if not edits:
+        return {
+            "ok": True,
+            "tool": "add_error_handling",
+            "file": str(path),
+            "language": "python",
+            "written": False,
+            "already_compliant": True,
+            "changes": {"wrapped": []},
+            "note": "every risky function already has a try/except (or none were risky)",
+        }
+
+    edits.extend(_py_logger_edits(tree))
+    new_source = _join_lines(apply_edits(lines, edits), source)
+    try:
+        ast.parse(new_source)
+    except SyntaxError as exc:
+        return {"ok": False, "error": f"refusing to write invalid Python: {exc.msg} (line {exc.lineno})"}
+
+    outcome = await _write_source(ctx, path, new_source, dry_run=dry_run)
+    return {
+        "ok": True,
+        "tool": "add_error_handling",
+        "file": str(path),
+        "language": "python",
+        "dry_run": dry_run,
+        "changes": {"wrapped": wrapped},
+        "diff": _diff_summary(source, new_source),
+        "write": outcome,
+    }
+
+
+def _js_wrap_body(source: str, function: dict[str, Any], logger_name: str = "logger") -> str:
+    """Return the replacement text for the inside of a JS function's braces."""
+    base_indent = _indent_of(source[function["src_line"] : function["header_start"]] or function["indent"] or "")
+    if not base_indent:
+        base_indent = function["indent"] or ""
+    inner_indent = base_indent + "  "
+    body = source[function["body_start"] : function["body_end"]]
+    body_lines = body.split("\n")
+    while body_lines and not body_lines[0].strip():
+        body_lines.pop(0)
+    while body_lines and not body_lines[-1].strip():
+        body_lines.pop()
+    indented = ["  " + line if line.strip() else line for line in body_lines]
+    name = function["name"]
+    return (
+        "\n"
+        + inner_indent
+        + "try {\n"
+        + "\n".join(indented)
+        + "\n"
+        + inner_indent
+        + "} catch (error) {\n"
+        + inner_indent
+        + f'  {logger_name}.error("{name}() failed", '
+        + "{ error: error instanceof Error ? error.message : String(error) });\n"
+        + inner_indent
+        + "  throw error;\n"
+        + inner_indent
+        + "}\n"
+        + base_indent
+    )
+
+
+async def _add_error_handling_js(ctx: dict[str, Any], path: Path, source: str, dry_run: bool) -> dict[str, Any]:
+    functions = find_js_functions(source)
+    to_wrap: list[dict[str, Any]] = []
+    for function in functions:
+        body = source[function["body_start"] : function["body_end"]]
+        if re.search(r"\btry\s*\{", body):
+            continue
+        if not any(pattern.search(body) for pattern in RISKY_JS_PATTERNS):
+            continue
+        if not [line for line in body.splitlines() if line.strip()]:
+            continue
+        to_wrap.append(function)
+
+    if not to_wrap:
+        return {
+            "ok": True,
+            "tool": "add_error_handling",
+            "file": str(path),
+            "language": _language(path),
+            "written": False,
+            "already_compliant": True,
+            "changes": {"wrapped": []},
+            "note": "every risky function already has a try/catch (or none were risky)",
+        }
+
+    new_source = source
+    for function in sorted(to_wrap, key=lambda f: f["open_index"], reverse=True):
+        new_source = (
+            new_source[: function["open_index"] + 1]
+            + _js_wrap_body(source, function)
+            + new_source[function["close_index"] :]
+        )
+
+    lines = new_source.splitlines()
+    if not _js_has_logger(source):
+        kind = _js_logger_kind(source)
+        lines = insert_lines(lines, [(js_import_insert_line(source.splitlines()), _js_logger_block(kind))])
+        new_source = _join_lines(lines, source)
+
+    if not _js_balanced(new_source):
+        return {"ok": False, "error": "refusing to write JS/TS with unbalanced braces"}
+
+    outcome = await _write_source(ctx, path, new_source, dry_run=dry_run)
+    return {
+        "ok": True,
+        "tool": "add_error_handling",
+        "file": str(path),
+        "language": _language(path),
+        "dry_run": dry_run,
+        "changes": {"wrapped": [f["name"] for f in to_wrap]},
+        "diff": _diff_summary(source, new_source),
+        "write": outcome,
+    }
+
+
+async def _add_error_handling(ctx: dict[str, Any], file_path: str, dry_run: bool = False) -> dict[str, Any]:
+    result = await _read_source(ctx, file_path, allowed=SUPPORTED_SUFFIXES)
+    if isinstance(result, dict):
+        return result
+    path, source = result
+    if _language(path) == "python":
+        return await _add_error_handling_python(ctx, path, source, dry_run)
+    return await _add_error_handling_js(ctx, path, source, dry_run)
