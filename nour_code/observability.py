@@ -30,7 +30,14 @@ from typing import Any
 from .config import Settings
 
 try:  # optional dependency
-    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST,
+        CollectorRegistry,
+        Counter,
+        Gauge,
+        Histogram,
+        generate_latest,
+    )
 
     PROMETHEUS_AVAILABLE = True
 except ImportError:  # pragma: no cover - depends on the environment
@@ -230,29 +237,51 @@ class Metrics:
             self.errors = _NoopMetric()
             return
 
+        # A private registry keeps Metrics self-contained: several instances can
+        # coexist (tests, reloads) without tripping duplicate-registration errors.
+        self.registry = CollectorRegistry()
         self.requests = Counter(
-            "nour_code_requests_total", "HTTP requests", ["endpoint", "status"]
+            "nour_code_requests_total", "HTTP requests", ["endpoint", "status"], registry=self.registry
         )
         self.model_calls = Counter(
-            "nour_code_model_calls_total", "Ollama chat completions", ["model", "outcome"]
+            "nour_code_model_calls_total",
+            "Ollama chat completions",
+            ["model", "outcome"],
+            registry=self.registry,
         )
         self.model_latency = Histogram(
-            "nour_code_model_latency_seconds", "Ollama chat completion latency", ["model"]
+            "nour_code_model_latency_seconds",
+            "Ollama chat completion latency",
+            ["model"],
+            registry=self.registry,
         )
         self.model_tokens = Counter(
-            "nour_code_model_tokens_total", "Tokens processed", ["model", "direction"]
+            "nour_code_model_tokens_total",
+            "Tokens processed",
+            ["model", "direction"],
+            registry=self.registry,
         )
         self.tool_calls = Counter(
-            "nour_code_tool_calls_total", "Tool invocations", ["tool", "status"]
+            "nour_code_tool_calls_total", "Tool invocations", ["tool", "status"], registry=self.registry
         )
         self.tool_latency = Histogram(
-            "nour_code_tool_latency_seconds", "Tool execution latency", ["tool"]
+            "nour_code_tool_latency_seconds",
+            "Tool execution latency",
+            ["tool"],
+            registry=self.registry,
         )
         self.iterations = Counter(
-            "nour_code_agent_iterations_total", "Agent loop iterations", ["outcome"]
+            "nour_code_agent_iterations_total",
+            "Agent loop iterations",
+            ["outcome"],
+            registry=self.registry,
         )
-        self.sessions = Gauge("nour_code_sessions_active", "Sessions currently in memory")
-        self.errors = Counter("nour_code_errors_total", "Errors", ["where", "type"])
+        self.sessions = Gauge(
+            "nour_code_sessions_active", "Sessions currently in memory", registry=self.registry
+        )
+        self.errors = Counter(
+            "nour_code_errors_total", "Errors", ["where", "type"], registry=self.registry
+        )
 
     def observe_model(
         self, *, model: str, latency_s: float, prompt_tokens: int, completion_tokens: int, outcome: str
@@ -271,4 +300,4 @@ class Metrics:
     def render(self) -> tuple[bytes, str]:
         if not self.enabled:
             raise RuntimeError("metrics disabled")
-        return generate_latest(), CONTENT_TYPE_LATEST
+        return generate_latest(self.registry), CONTENT_TYPE_LATEST
