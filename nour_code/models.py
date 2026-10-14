@@ -195,9 +195,13 @@ class StreamEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
     def to_sse(self) -> str:
+        """Render as an SSE frame: the event name carries ``type``, ``data`` the payload."""
         import json
 
-        return f"event: {self.type}\ndata: {json.dumps(self.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+        payload: dict[str, Any] = dict(self.data)
+        payload.setdefault("type", self.type)
+        payload.setdefault("ts", self.ts)
+        return f"event: {self.type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 # ---------------------------------------------------------------------------
