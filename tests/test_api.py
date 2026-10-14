@@ -250,7 +250,42 @@ def test_console_page_is_served(client) -> None:
     test_client, _, _ = client
     response = test_client.get("/")
     assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
     assert "nour-code" in response.text
+
+
+def test_console_page_has_the_full_client() -> None:
+    """Markup, splitters, event console and the streaming client must all ship."""
+    from nour_code.main import CONSOLE_ASSET, _console_html
+
+    assert CONSOLE_ASSET.is_file()
+    html = _console_html()
+    for marker in (
+        'id="transcript"',
+        'id="eventsView"',
+        'id="inspector"',
+        'id="vGutter"',
+        'id="hGutter"',
+        'id="timelineView"',
+        'id="skillsView"',
+        "fetch('/chat'",
+        "fetch('/chat/sync'",
+        "getReader()",
+        "AbortController",
+        "localStorage.setItem('nour.ui.chatWidth'",
+    ):
+        assert marker in html, f"{marker} missing from the console"
+
+
+def test_console_page_handles_a_missing_asset(monkeypatch: pytest.MonkeyPatch) -> None:
+    from nour_code import main as main_module
+
+    original = main_module.CONSOLE_ASSET
+    monkeypatch.setattr(main_module, "CONSOLE_ASSET", original.with_name("does-not-exist.html"))
+    html = main_module._console_html()
+    assert "Console asset missing" in html
+    monkeypatch.setattr(main_module, "CONSOLE_ASSET", original)
+    assert "nour-code" in main_module._console_html()
 
 
 def test_openapi_schema_is_available(client) -> None:
