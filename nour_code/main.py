@@ -343,6 +343,12 @@ async def _sse_stream(container: Container, session: Session, payload: ChatReque
                 production_mode=payload.production_ready,
                 audit=container.audit,
                 approval_mode=payload.approval,
+                model=payload.model,
+                temperature=payload.temperature,
+                seed=payload.seed,
+                enable_thinking=payload.enable_thinking,
+                tools=payload.tools,
+                system_extra=payload.system_extra,
             ):
                 await queue.put(event.to_sse())
         except asyncio.CancelledError:
@@ -410,6 +416,12 @@ def _register_routes(app: FastAPI) -> None:
                     production_mode=payload.production_ready,
                     audit=container.audit,
                     approval_mode="off",  # a blocking request cannot wait for a human
+                    model=payload.model,
+                    temperature=payload.temperature,
+                    seed=payload.seed,
+                    enable_thinking=payload.enable_thinking,
+                    tools=payload.tools,
+                    system_extra=payload.system_extra,
                 )
             finally:
                 with contextlib.suppress(Exception):

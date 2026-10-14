@@ -291,6 +291,15 @@ class Agent:
 
                     continue
 
+            pre_existing: bool | None = None
+            if name in FILE_MUTATING_TOOLS:
+                target_before = _first_path(arguments)
+                if target_before:
+                    try:
+                        pre_existing = self.permissions.resolve_path(target_before, kind="any").exists()
+                    except PermissionDeniedError:
+                        pre_existing = None
+
             if parse_error is not None:
                 result = ToolResult.failure(parse_error)
                 rendered = f"ERROR: {parse_error}. Reply with a tool call whose arguments are valid JSON."
@@ -346,7 +355,10 @@ class Agent:
                     except PermissionDeniedError:
                         resolved = None
                     if resolved is not None:
-                        action = "deleted" if name == "delete_file" else ("created" if not resolved.exists() else "modified")
+                        if name == "delete_file":
+                            action = "deleted"
+                        else:
+                            action = "modified" if pre_existing else "created"
                         await emit(
                             StreamEvent(
                                 type="file_change",
@@ -783,7 +795,11 @@ class Agent:
         )
         if tools:
             allowed = set(tools)
-            schemas = [schema for schema in self.registry.schemas() if schema.get("name") in allowed]
+            schemas = [
+                schema
+                for schema in self.registry.schemas()
+                if str((schema.get("function") or {}).get("name") or schema.get("name") or "") in allowed
+            ]
         else:
             schemas = None
         # Registered on the container so POST /sessions/{id}/approve can reach it.
