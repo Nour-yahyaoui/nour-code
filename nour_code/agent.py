@@ -608,3 +608,205 @@ class Agent:
         has_ci = workflows.is_dir() and any(workflows.glob("*.y*ml"))
         _mark("ci", bool(has_ci), str(workflows) if has_ci else "no .github/workflows found")
         return status
+
+    # -- the loop -----------------------------------------------------------
+    async def _turn(
+        self,
+        session: Session,
+        user_message: str,
+        *,
+        max_iterations: int | None,
+        production_mode: bool | None,
+        audit: Any,
+        stream: bool,
+    ) -> AsyncIterator[StreamEvent]:
+        queue: list[StreamEvent] = []
+
+        async def emit(event: StreamEvent) -> None:
+            queue.append(event)
+
+        state = TurnState()
+        state.session_id = session.session_id  # type: ignore[attr-defined]
+        limit = max_iterations or self.settings.max_iterations
+        production = detect_production_mode(user_message) if production_mode is None else production_mode
+        if production:
+            session.production_ready = True
+
+        session.add(ChatMessage.user(user_message))
+        system = self._system_message(session, production)
+        ctx = self._tool_context(session, emit, audit=audit)
+        await self._emit_skill_events(session, emit)
+        async for event in self._drain(queue):
+            yield event
+
+        rounds = 1 + (self.settings.production_max_remediation_rounds if production else 0)
+        final_text = ""
+        finished = False
+        finish_reason = "stop"
+
+        try:
+            for round_index in range(rounds):
+                for iteration in range(1, limit + 1):
+                    state.iterations = iteration
+                    messages = self._messages_for_model(session, system)
+                    if stream:
+                        content, calls, _usage, finish = await self._stream_iteration(
+                            messages, emit, state, iteration
+                        )
+                    else:
+                        content, calls, _usage, finish = await self._sync_iteration(messages, state, iteration)
+
+                    if calls:
+                        session.add(ChatMessage.assistant(content or None, calls))
+                        await self._execute_tool_calls(
+                            session, calls, state=state, iteration=iteration, ctx=ctx, emit=emit
+                        )
+                        async for event in self._drain(queue):
+                            yield event
+                        continue
+
+                    final_text = content
+                    finish_reason = finish
+                    finished = True
+                    session.add(ChatMessage.assistant(content))
+                    async for event in self._drain(queue):
+                        yield event
+                    break
+                else:
+                    state.warnings.append(
+                        f"stopped after {limit} iterations without a final answer (partial state returned)"
+                    )
+                    finish_reason = "max_iterations"
+                    finished = False
+
+                if not production:
+                    break
+
+                await self._production_harden(
+                    session, state, ctx, emit, round_index=round_index, user_message=user_message
+                )
+                async for event in self._drain(queue):
+                    yield event
+
+                scan = await self._production_scan(session, state)
+                if not scan["placeholders"]:
+                    break
+                state.warnings.append(
+                    f"found {scan['count']} placeholder(s) in the files that changed"
+                )
+                if round_index == rounds - 1:
+                    state.warnings.append("placeholders remain after the remediation rounds")
+                    break
+                offenders = "\n".join(f"- {item}" for item in scan["offenders"])
+                session.add(
+                    ChatMessage.user(
+                        "Production-ready check failed. Replace every placeholder stub you left "
+                        "with a real implementation and re-emit the affected files:\n"
+                        f"{offenders}\n"
+                        "Do not answer with an explanation only — call the tools and fix the code."
+                    )
+                )
+        except asyncio.CancelledError:
+            raise
+        except OllamaError as exc:
+            self.logger.error("ollama failure: %s", exc)
+            state.warnings.append(str(exc))
+            yield StreamEvent(type="error", data={"message": str(exc), "code": "ollama_error", "fatal": True})
+        except Exception as exc:  # noqa: BLE001 - the stream must still end cleanly
+            self.logger.exception("agent loop failed")
+            message = f"{exc.__class__.__name__}: {exc}"
+            state.warnings.append(message)
+            yield StreamEvent(type="error", data={"message": message, "code": "agent_error", "fatal": True})
+
+        checklist: list[dict[str, Any]] = []
+        if production:
+            status = await self._production_status(session, state)
+            checklist = build_production_checklist(status)
+            final_text = (final_text or "") + render_checklist_markdown(checklist)
+            failed = [row for row in checklist if row["status"] != "ok"]
+            if failed and finished:
+                state.warnings.append(
+                    f"{len(failed)} production-readiness item(s) still open: "
+                    + ", ".join(row["item"] for row in failed)
+                )
+
+        session.trim(self.settings.max_history_messages)
+        response = ChatResponse(
+            session_id=session.session_id,
+            content=final_text,
+            iterations=state.iterations,
+            finished=finished,
+            finish_reason=finish_reason,
+            tool_calls=state.tool_calls,
+            warnings=state.warnings,
+            production_ready=production,
+            production_checklist=checklist,
+            usage=ModelUsage(
+                prompt_tokens=state.usage.prompt_tokens,
+                completion_tokens=state.usage.completion_tokens,
+                total_tokens=state.usage.total_tokens,
+                calls=state.model_calls,
+                total_latency_ms=round(state.usage.total_duration_ns / 1_000_000, 2),
+            ),
+            duration_ms=round(state.duration_ms, 2),
+        )
+        self.logger.info(
+            "turn complete",
+            extra={
+                "session_id": session.session_id,
+                "iterations": state.iterations,
+                "tool_calls": len(state.tool_calls),
+                "finished": finished,
+                "production_ready": production,
+                "duration_ms": round(state.duration_ms, 2),
+            },
+        )
+        yield StreamEvent(type="done", data={"response": response.model_dump(mode="json")})
+
+    # -- public API ---------------------------------------------------------
+    async def run_stream(
+        self,
+        session: Session,
+        user_message: str,
+        *,
+        max_iterations: int | None = None,
+        production_mode: bool | None = None,
+        audit: Any = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream the turn as SSE events (tokens arrive as the model emits them)."""
+        async for event in self._turn(
+            session,
+            user_message,
+            max_iterations=max_iterations,
+            production_mode=production_mode,
+            audit=audit,
+            stream=True,
+        ):
+            yield event
+
+    async def run_sync(
+        self,
+        session: Session,
+        user_message: str,
+        *,
+        max_iterations: int | None = None,
+        production_mode: bool | None = None,
+        audit: Any = None,
+    ) -> ChatResponse:
+        """Run the turn to completion and return the whole response."""
+        fallback = ChatResponse(session_id=session.session_id, content="", finished=False, finish_reason="error")
+        async for event in self._turn(
+            session,
+            user_message,
+            max_iterations=max_iterations,
+            production_mode=production_mode,
+            audit=audit,
+            stream=False,
+        ):
+            if event.type == "done":
+                return ChatResponse.model_validate(event.data["response"])
+            if event.type == "error":
+                fallback.warnings.append(str(event.data.get("message", "unknown error")))
+                fallback.content = ""
+        fallback.finish_reason = "error"
+        return fallback
