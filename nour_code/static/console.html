@@ -570,20 +570,24 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
   }
 
   /* ---------------- rendering ---------------- */
-  function renderThinking(text) {
+  function renderThinking(data) {
     const turn = state.turn;
     if (!turn) return;
-    if (!turn.thinking) {
+    const iteration = data.iteration || 1;
+    if (!turn.thinkBlocks) turn.thinkBlocks = new Map();
+
+    let body = turn.thinkBlocks.get(iteration);
+    if (!body) {
       const details = el('details', 'think');
       const summary = el('summary');
-      summary.appendChild(el('span', null, 'thinking'));
-      const body = el('div', 'think-body');
+      summary.appendChild(el('span', null, iteration > 1 ? `thinking · iteration ${iteration}` : 'thinking'));
+      body = el('div', 'think-body');
       details.append(summary, body);
       details.open = state.showThinking && $('think').checked;
       turn.cards.parentElement.insertBefore(details, turn.cards);
-      turn.thinking = body;
+      turn.thinkBlocks.set(iteration, body);
     }
-    turn.thinking.textContent += text;
+    body.textContent += data.text || '';
     scrollDown();
   }
 
@@ -746,7 +750,7 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     pushEvent(type, data);
     switch (type) {
       case 'thinking':
-        renderThinking(data.text || '');
+        renderThinking(data);
         break;
       case 'token':
         if (state.turn) {
