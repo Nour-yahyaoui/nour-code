@@ -649,13 +649,17 @@ offline work.
 ```bash
 pip install -r requirements-dev.txt
 
-pytest                       # 163 tests
+pytest                       # 265 tests
 pytest -k security           # one area
 pytest --tb=short -q         # terse failures
 
 ruff check nour_code tests   # lint
 ruff format nour_code tests  # format (optional)
 ```
+
+`make help` lists the same commands (venv bootstrap, lint, test, run, docker
+build). CI runs `ruff`, `compileall` and `pytest` on Python 3.11-3.13 for every
+push and pull request (`.github/workflows/ci.yml`).
 
 The suite runs entirely offline: the Ollama client is replaced by a scripted
 `FakeModel` (see `tests/conftest.py`) that replays tool calls and answers, so the
