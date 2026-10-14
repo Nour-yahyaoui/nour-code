@@ -991,12 +991,12 @@ def _py_function_args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tupl
         if index >= defaults_offset:
             continue  # has a default: optional by contract
         pairs.append((arg.arg, arg.annotation))
-    for arg, default in zip(node.args.kwonlyargs, node.args.defaults):
-        if arg.arg in node.args.kw_defaults and False:  # pragma: no cover - defensive
+    for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+        if default is not None:
+            continue  # keyword-only with a default: optional by contract
+        if arg.arg in {name for name, _ in pairs}:
             continue
-        _ = default
-        if arg.arg not in {name for name, _ in pairs}:
-            pairs.append((arg.arg, arg.annotation))
+        pairs.append((arg.arg, arg.annotation))
     return pairs
 
 
