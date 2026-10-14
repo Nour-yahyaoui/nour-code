@@ -83,6 +83,7 @@ PRODUCTION_FILE_ARGS = ("path", "file_path", "target", "source")
 class TurnState:
     """Mutable bookkeeping for one user turn."""
 
+    session_id: str = "-"
     usage: Usage = field(default_factory=Usage)
     model_calls: int = 0
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
