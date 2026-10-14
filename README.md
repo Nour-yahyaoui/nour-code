@@ -245,3 +245,169 @@ How it behaves:
 > matches `git log --format=…`. Swap it for `(^|\s)(format|mkfs)(\s|$)` in
 > `permissions.yaml` if you need `--format` back — the file documents this
 > inline.
+
+## 6. API
+
+All endpoints return JSON except `/chat`, which is an SSE stream, and `/metrics`,
+which is Prometheus text.
+
+### `POST /chat` — stream a turn (SSE)
+
+```bash
+curl -N -X POST http://localhost:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "list the python files and summarise the entrypoint"}'
+```
+
+```bash
+# resume a session, force production mode, cap the iterations
+curl -N -X POST http://localhost:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "make it production ready", "session_id": "sess_ab12cd34ef56",
+       "production_ready": true, "max_iterations": 8}'
+```
+
+Body:
+
+| Field | Type | Description |
+|---|---|---|
+| `message` | string (required) | The user prompt |
+| `session_id` | string | Resume an existing session; a new one is created when omitted |
+| `working_dir` | string | Override the working directory for this turn (must be inside an allowed root) |
+| `max_iterations` | int | Override `NOUR_CODE_MAX_ITERATIONS` |
+| `production_ready` | bool | Force production mode on/off instead of auto-detecting |
+| `metadata` | object | Free-form metadata stored on the session |
+
+### `POST /chat/sync` — same turn, single response
+
+```bash
+curl -s -X POST http://localhost:8000/chat/sync \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "what files are in this folder?"}' | jq
+```
+
+```json
+{
+  "session_id": "sess_9f2c1a7b3d44",
+  "content": "There are 12 files …",
+  "iterations": 2,
+  "finished": true,
+  "finish_reason": "stop",
+  "tool_calls": [
+    {"id": "call_0", "tool": "list_directory", "arguments": {"path": "."},
+     "status": "ok", "result": "…", "error": null, "duration_ms": 4.1,
+     "iteration": 1, "source": "builtin", "skill": null}
+  ],
+  "warnings": [],
+  "production_ready": false,
+  "production_checklist": [],
+  "usage": {"prompt_tokens": 812, "completion_tokens": 96, "total_tokens": 908,
+            "calls": 2, "total_latency_ms": 1830.5},
+  "duration_ms": 1902.7
+}
+```
+
+### `GET /skills` — list loaded skills
+
+```bash
+curl -s http://localhost:8000/skills | jq
+```
+
+### `POST /skills/reload` — hot reload
+
+```bash
+curl -s -X POST http://localhost:8000/skills/reload | jq
+# {"ok": true, "loaded": ["security_skill (security_scan, check_secrets, check_dependency_cves)"],
+#  "skipped": [], "errors": [], "duration_ms": 12.4}
+```
+
+### `GET /sessions` / `DELETE /sessions/{id}`
+
+```bash
+curl -s http://localhost:8000/sessions | jq
+curl -s -X DELETE http://localhost:8000/sessions/sess_9f2c1a7b3d44 | jq
+```
+
+### `GET /health`
+
+```bash
+curl -s http://localhost:8000/health | jq '{status, ollama_reachable, model_loaded, tools}'
+```
+
+### `GET /audit` — tail the audit log
+
+```bash
+curl -s 'http://localhost:8000/audit?limit=20' | jq '.entries[-3:]'
+```
+
+```json
+[{"ts": "2026-10-14T09:12:44Z", "ts_epoch": 1760434364.12, "session_id": "sess_9f2c1a7b3d44",
+  "tool": "write_file", "args_hash": "4f3c9a1de8b2c7aa", "result_status": "ok",
+  "duration_ms": 3.42, "iteration": 1, "source": "builtin", "skill": null}]
+```
+
+### `GET /metrics`
+
+```bash
+curl -s http://localhost:8000/metrics | grep nour_code | head
+```
+
+### Errors
+
+Errors are always JSON: `{"error": "...", "code": "...", "detail": "..."}` with
+`403` (permission denied), `404` (unknown session), `422` (request validation),
+`502` (Ollama error), `503` (Ollama unreachable / metrics disabled) or `500`.
+
+## 7. Streaming events (SSE)
+
+`/chat` emits named events; the `data:` line is a JSON object:
+
+| Event | Payload | When |
+|---|---|---|
+| `token` | `{text, iteration}` | Every chunk the model produces, forwarded immediately |
+| `tool_call` | `{id, tool, arguments, iteration, skill}` | Before a tool runs |
+| `tool_result` | `{id, tool, status, result, error, duration_ms, iteration, skill}` | After it finishes |
+| `skill_loaded` | `{name, description, triggers, tools, source, version}` | On the first turn of a session, and after a reload |
+| `error` | `{message, code, fatal}` | Model/agent failure; the stream still ends with `done` |
+| `done` | `{response: {...ChatResponse...}}` | Always last |
+
+`status` is `ok`, `error` or `denied`. Keep-alive comments (`: keepalive`) are
+sent every 15 s so proxies do not drop long tool calls.
+
+```bash
+curl -N -X POST http://localhost:8000/chat -H 'Content-Type: application/json' \
+  -d '{"message": "read README.md and count the sections"}' | grep -E '^event:'
+```
+
+Browser example:
+
+```js
+const response = await fetch('/chat', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({message: 'explain this repo'}),
+});
+const reader = response.body.getReader();
+// parse "event: <type>\ndata: <json>\n\n" frames …
+```
+
+## 8. Built-in tools
+
+| Tool | Arguments | Notes |
+|---|---|---|
+| `read_file` | `path`, `max_chars=100000`, `encoding="utf-8"` | Refuses binary files; size cap from `filesystem.max_read_bytes` |
+| `write_file` | `path`, `content`, `create_parents=true`, `append=false` | Atomic write (temp file + `os.replace`); parent dirs created |
+| `list_directory` | `path="."`, `recursive=false`, `max_entries=500` | Skips `ignore_dirs`; returns name/type/size |
+| `search_files` | `root`, `pattern`, `content_regex?`, `max_results=200` | Glob search, optional regex over file contents |
+| `run_shell` | `command`, `cwd?`, `timeout_seconds=60`, `env?` | Allow-listed executables, deny-list regexes, process-group kill on timeout |
+| `apply_patch` | `path`, `diff`, `create_backup=false`, `dry_run=true?` | `git apply` → `patch` → built-in unified-diff engine |
+| `delete_file` | `path`, `recursive=false` | **Disabled by default** (`tools.delete_file: false`) |
+
+Tool results are capped at `NOUR_CODE_MAX_TOOL_OUTPUT_CHARS` (100 KB by default)
+with a `...[nour-code: output truncated, N chars removed]...` marker, so a
+runaway `cat` can never blow up the context window.
+
+`run_shell` returns `{command, cwd, executable, exit_code, timed_out, stdout,
+stderr, truncated}`. Non-zero exits keep the payload and report
+`ERROR: command exited with N` plus the tail of stdout/stderr, so skills that
+parse command output (`npm audit --json`) still work.
