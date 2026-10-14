@@ -173,4 +173,5 @@ def test_metrics_ignores_zero_token_counts() -> None:
     metrics = Metrics(enabled=True)
     metrics.observe_model(model="qwen3:8b", latency_s=0.1, prompt_tokens=0, completion_tokens=0, outcome="ok")
     text = metrics.render()[0].decode("utf-8")
-    assert "nour_code_model_tokens_total" not in text
+    # the metric is declared but must not carry a sample for zero-token calls
+    assert "nour_code_model_tokens_total{" not in text
