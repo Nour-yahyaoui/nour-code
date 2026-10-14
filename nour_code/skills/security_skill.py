@@ -509,7 +509,7 @@ async def _check_dependency_cves(
     if permissions is None:  # pragma: no cover - wiring guarantee
         return {"ok": False, "error": "permissions unavailable"}
     try:
-        target = permissions.resolve_path(package_json_path, must_exist=True)
+        target = permissions.resolve_path(package_json_path, must_exist=True, kind="any")
         if await anyio.Path(target).is_dir():
             target = target / "package.json"
             if not await anyio.Path(target).is_file():
