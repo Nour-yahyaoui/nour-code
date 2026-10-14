@@ -322,6 +322,15 @@ class OllamaClient:
             )
         return calls
 
+    @staticmethod
+    def _extract_reasoning(message: dict[str, Any]) -> str:
+        """Pull the model's reasoning out of a completion message (may be empty)."""
+        for key in ("reasoning", "reasoning_content", "thinking"):
+            value = message.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
     # -- blocking chat -----------------------------------------------------
     async def chat(
         self,
@@ -365,6 +374,7 @@ class OllamaClient:
             )
         return ChatResult(
             content=content,
+            thinking=self._extract_reasoning(message),
             tool_calls=self._parse_tool_calls(message.get("tool_calls")),
             finish_reason=str(choice.get("finish_reason") or "stop"),
             usage=usage,
@@ -436,6 +446,16 @@ class OllamaClient:
         choice = choices[0] or {}
         delta = choice.get("delta") or {}
         finish = str(choice.get("finish_reason") or "")
+
+        # Qwen3 (and other reasoning models) stream their chain of thought in
+        # ``reasoning`` (OpenAI-compatible) or ``reasoning_content`` (Ollama).
+        reasoning = delta.get("reasoning")
+        if reasoning is None:
+            reasoning = delta.get("reasoning_content")
+        if reasoning is None:
+            reasoning = delta.get("thinking")
+        if isinstance(reasoning, str) and reasoning:
+            yield StreamChunk(kind="thinking", text=reasoning)
 
         text = delta.get("content")
         if isinstance(text, str) and text:
