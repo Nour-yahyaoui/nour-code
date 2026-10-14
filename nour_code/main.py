@@ -446,197 +446,27 @@ async def _with_lock(generator: AsyncIterator[str], lock: asyncio.Lock) -> Async
 # ---------------------------------------------------------------------------
 # Minimal browser console (convenience only — the API is the real interface)
 # ---------------------------------------------------------------------------
+CONSOLE_ASSET = Path(__file__).resolve().parent / "static" / "console.html"
+
+
 def _console_html() -> str:
-    """Tiny single-page client used to poke at the server from a browser."""
-    return """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>nour-code console</title>
-<style>
-  :root { color-scheme: dark; --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --ok:#3fb950; --bad:#f85149; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-  h1 { font-size:16px; margin:0; letter-spacing:.5px; }
-  .badge { padding:2px 8px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:12px; }
-  .badge.ok { color:var(--ok); border-color:var(--ok); }
-  .badge.bad { color:var(--bad); border-color:var(--bad); }
-  main { display:grid; grid-template-columns: 1fr 320px; gap:12px; padding:12px 16px; height:calc(100vh - 53px); }
-  @media (max-width: 900px) { main { grid-template-columns:1fr; height:auto; } }
-  #log { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; white-space:pre-wrap; }
-  #log .role { color:var(--accent); }
-  #log .tool { color:#d29922; }
-  #log .err { color:var(--bad); }
-  #log .meta { color:var(--muted); font-size:12px; }
-  aside { display:flex; flex-direction:column; gap:8px; }
-  textarea, input, select { width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit; }
-  textarea { min-height:120px; resize:vertical; }
-  button { background:var(--accent); color:#05121f; border:0; border-radius:6px; padding:8px 12px; font-weight:700; cursor:pointer; }
-  button[disabled] { opacity:.5; cursor:not-allowed; }
-  .row { display:flex; gap:8px; }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
-  .panel h2 { font-size:12px; text-transform:uppercase; color:var(--muted); margin:0 0 6px; letter-spacing:.08em; }
-  ul { margin:6px 0 0; padding-left:18px; }
-</style>
-</head>
-<body>
-<header>
-  <h1>nour-code</h1>
-  <span id="health" class="badge">checking…</span>
-  <span id="session" class="badge">session: –</span>
-  <span id="skills" class="badge">skills: –</span>
-  <span style="flex:1"></span>
-  <button id="clear" style="background:transparent;color:var(--muted);border:1px solid var(--line)">new session</button>
-</header>
-<main>
-  <section id="log">Send a message to start.\\n</section>
-  <aside>
-    <div class="panel">
-      <h2>message</h2>
-      <textarea id="message" placeholder="e.g. review this folder for security issues, then make it production ready"></textarea>
-      <div class="row" style="margin-top:8px">
-        <button id="send" style="flex:1">stream (SSE)</button>
-        <button id="sync" style="flex:1;background:transparent;color:var(--accent);border:1px solid var(--accent)">sync</button>
-      </div>
-      <label class="meta" style="display:block;margin-top:8px">
-        <input type="checkbox" id="prod" /> force production-ready mode
-      </label>
-    </div>
-    <div class="panel">
-      <h2>loaded skills</h2>
-      <ul id="skillList"><li class="meta">loading…</li></ul>
-    </div>
-    <div class="panel">
-      <h2>tools</h2>
-      <ul id="toolList"><li class="meta">–</li></ul>
-    </div>
-  </aside>
-</main>
-<script>
-const log = document.getElementById('log');
-let sessionId = localStorage.getItem('nour-code-session') || '';
+    """Load the single-page client shipped next to the package.
 
-function append(node) { log.appendChild(node); log.scrollTop = log.scrollHeight; }
-function line(text, cls) {
-  const div = document.createElement('div');
-  if (cls) div.className = cls;
-  div.textContent = text;
-  append(div);
-  return div;
-}
+    ``console.html`` is a static asset (see ``nour_code/static/``) so the markup,
+    styles and client script can be edited without touching Python strings.
+    """
+    try:
+        return CONSOLE_ASSET.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - only if the package is incomplete
+        logging.getLogger("nour_code").error("cannot read %s: %s", CONSOLE_ASSET, exc)
+        return (
+            "<!doctype html><title>nour-code</title>"
+            "<p style='font-family:monospace'>Console asset missing "
+            f"({CONSOLE_ASSET}). The JSON API under /chat, /chat/sync, /health "
+            "and /skills is unaffected.</p>"
+        )
 
-async function refreshStatus() {
-  try {
-    const [health, skills] = await Promise.all([fetch('/health'), fetch('/skills')]);
-    const h = await health.json(), s = await skills.json();
-    const badge = document.getElementById('health');
-    badge.textContent = `ollama ${h.ollama_reachable ? 'up' : 'down'} · ${h.model}${h.model_loaded ? '' : ' (not pulled)'}`;
-    badge.className = 'badge ' + (h.ollama_reachable && h.model_loaded ? 'ok' : 'bad');
-    document.getElementById('skills').textContent = `skills: ${s.count}`;
-    const list = document.getElementById('skillList');
-    list.innerHTML = '';
-    (s.skills || []).forEach(sk => {
-      const li = document.createElement('li');
-      li.innerHTML = `<b>${sk.name}</b><div class="meta">${sk.description}</div><div class="meta">tools: ${(sk.tools||[]).join(', ')}</div>`;
-      list.appendChild(li);
-    });
-    if (!s.count) list.innerHTML = '<li class="meta">none loaded</li>';
-  } catch (err) {
-    document.getElementById('health').textContent = 'offline';
-    document.getElementById('health').className = 'badge bad';
-  }
-}
 
-async function send(stream) {
-  const message = document.getElementById('message').value.trim();
-  if (!message) return;
-  const button = stream ? document.getElementById('send') : document.getElementById('sync');
-  button.disabled = true;
-  line('\\n▌ you: ' + message, 'role');
-  const target = line('', 'meta');
-  try {
-    const response = await fetch(stream ? '/chat' : '/chat/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        session_id: sessionId || null,
-        production_ready: document.getElementById('prod').checked ? true : null,
-      }),
-    });
-    if (!response.ok) {
-      const detail = await response.text();
-      line('error ' + response.status + ': ' + detail, 'err');
-      return;
-    }
-    if (!stream) {
-      const data = await response.json();
-      sessionId = data.session_id;
-      localStorage.setItem('nour-code-session', sessionId);
-      document.getElementById('session').textContent = 'session: ' + sessionId;
-      line(data.content || '(empty response)');
-      (data.tool_calls || []).forEach(call => line(`· ${call.tool} → ${call.status} (${call.duration_ms} ms)`, 'tool'));
-      (data.warnings || []).forEach(w => line('⚠ ' + w, 'err'));
-      return;
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let answer = line('');
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split('\\n\\n');
-      buffer = frames.pop() || '';
-      for (const frame of frames) {
-        if (frame.startsWith(':')) continue;
-        const typeMatch = /^event: (.+)$/m.exec(frame);
-        const dataMatch = /^data: (.+)$/m.exec(frame);
-        if (!typeMatch || !dataMatch) continue;
-        const type = typeMatch[1].trim();
-        const data = JSON.parse(dataMatch[1]);
-        if (type === 'token') answer.textContent += data.text;
-        else if (type === 'tool_call') line(`→ ${data.tool}(${JSON.stringify(data.arguments).slice(0, 220)})`, 'tool');
-        else if (type === 'tool_result') line(`← ${data.tool} [${data.status}] ${(data.result || data.error || '').slice(0, 400)}`, data.status === 'ok' ? 'meta' : 'err');
-        else if (type === 'skill_loaded') line(`✦ skill loaded: ${data.name} (${(data.tools||[]).join(', ')})`, 'meta');
-        else if (type === 'error') line('✖ ' + data.message, 'err');
-        else if (type === 'done') {
-          const r = data.response;
-          sessionId = r.session_id;
-          localStorage.setItem('nour-code-session', sessionId);
-          document.getElementById('session').textContent = 'session: ' + sessionId;
-          line('', 'meta').textContent = `— ${r.iterations} iteration(s), ${r.tool_calls.length} tool call(s), ${Math.round(r.duration_ms)} ms`;
-          (r.warnings || []).forEach(w => line('⚠ ' + w, 'err'));
-          (r.production_checklist || []).forEach(row => line(`${row.symbol} ${row.item} — ${row.detail}`));
-        }
-      }
-    }
-  } catch (err) {
-    line('request failed: ' + err, 'err');
-  } finally {
-    button.disabled = false;
-    target.remove();
-  }
-}
-
-document.getElementById('send').onclick = () => send(true);
-document.getElementById('sync').onclick = () => send(false);
-document.getElementById('clear').onclick = async () => {
-  if (sessionId) { await fetch('/sessions/' + sessionId, { method: 'DELETE' }).catch(() => {}); }
-  sessionId = '';
-  localStorage.removeItem('nour-code-session');
-  document.getElementById('session').textContent = 'session: –';
-  log.textContent = 'New session.\\n';
-};
-document.getElementById('session').textContent = sessionId ? 'session: ' + sessionId : 'session: new';
-refreshStatus();
-</script>
-</body>
-</html>
-"""
 
 
 #: Default ASGI application, so ``uvicorn nour_code.main:app`` works out of the box.
