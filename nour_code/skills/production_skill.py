@@ -1138,3 +1138,388 @@ async def _add_input_validation(ctx: dict[str, Any], file_path: str, dry_run: bo
     if _language(path) == "python":
         return await _add_input_validation_python(ctx, path, source, dry_run)
     return await _add_input_validation_js(ctx, path, source, dry_run)
+
+
+# ---------------------------------------------------------------------------
+# Project detection
+# ---------------------------------------------------------------------------
+async def _read_json(ctx: dict[str, Any], path: Path) -> dict[str, Any]:
+    tools = ctx.get("tools")
+    try:
+        text = await tools.read(str(path))
+    except (RuntimeError, AttributeError):
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def _detect_project(ctx: dict[str, Any], root: Path, override: str = "auto") -> dict[str, Any]:
+    """Inspect a project directory and return everything the generators need."""
+    import anyio
+
+    info: dict[str, Any] = {
+        "root": str(root),
+        "runtime": "generic",
+        "package_manager": "npm",
+        "framework": None,
+        "port": 8000,
+        "entrypoint": None,
+        "node_version": "20",
+        "python_version": "3.11",
+        "lockfile": None,
+        "scripts": {},
+    }
+
+    package_json = root / "package.json"
+    if await anyio.Path(package_json).is_file():
+        manifest = await _read_json(ctx, package_json)
+        dependencies = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
+        info.update(
+            runtime="node",
+            package_manager=_detect_package_manager(root),
+            lockfile=_detect_lockfile(root),
+            framework="nextjs" if "next" in dependencies else None,
+            scripts=manifest.get("scripts") or {},
+            port=3000,
+            name=manifest.get("name") or root.name,
+            package_json=manifest,
+        )
+        engines = manifest.get("engines") or {}
+        node_engine = str(engines.get("node") or "")
+        match = re.search(r"(\d+)", node_engine)
+        if match:
+            info["node_version"] = match.group(1)
+
+    if info["runtime"] == "generic":
+        for marker in ("requirements.txt", "pyproject.toml", "Pipfile", "manage.py"):
+            if await anyio.Path(root / marker).exists():
+                info.update(runtime="python", port=8000)
+                break
+    if info["runtime"] == "python":
+        info["python_version"] = await _detect_python_version(ctx, root)
+        info["entrypoint"] = await _detect_python_entrypoint(ctx, root)
+
+    if info["runtime"] == "generic" and await anyio.Path(root / "Cargo.toml").is_file():
+        cargo = (await anyio.Path(root / "Cargo.toml").read_text(encoding="utf-8", errors="replace")) if True else ""
+        name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"', cargo)
+        info.update(runtime="rust", port=8080, name=name_match.group(1) if name_match else root.name)
+
+    if override in {"node", "python", "rust"}:
+        info["runtime"] = override
+        if override == "node" and info.get("port") == 8000:
+            info["port"] = 3000
+        if override == "python" and info.get("port") == 3000:
+            info["port"] = 8000
+    return info
+
+
+def _detect_package_manager(root: Path) -> str:
+    for lockfile, manager in (
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("package-lock.json", "npm"),
+        ("bun.lockb", "bun"),
+    ):
+        if (root / lockfile).exists():
+            return manager
+    return "npm"
+
+
+def _detect_lockfile(root: Path) -> str | None:
+    for lockfile in ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"):
+        if (root / lockfile).exists():
+            return lockfile
+    return None
+
+
+async def _detect_python_version(ctx: dict[str, Any], root: Path) -> str:
+    import anyio
+
+    pyproject = root / "pyproject.toml"
+    if await anyio.Path(pyproject).is_file():
+        text = await ctx["tools"].read(str(pyproject)) if ctx.get("tools") else ""
+        match = re.search(r"requires-python\s*=\s*[\"'][>=~^]*\s*3\.(\d+)", text or "")
+        if match:
+            return f"3.{match.group(1)}"
+    return "3.11"
+
+
+async def _detect_python_entrypoint(ctx: dict[str, Any], root: Path) -> str | None:
+    """Find ``module:app`` for ASGI apps, or a plain script to run."""
+    import anyio
+
+    candidates = ["app.py", "main.py", "src/app.py", "src/main.py", "api/main.py", "server.py", "wsgi.py"]
+    for candidate in candidates:
+        target = root / candidate
+        if not await anyio.Path(target).is_file():
+            continue
+        try:
+            text = await ctx["tools"].read(str(target))
+        except RuntimeError:
+            continue
+        if re.search(r"\bFastAPI\s*\(", text) or re.search(r"\bFlask\s*\(", text) or re.search(r"\bapp\s*=\s*\w+\(", text):
+            module = candidate[:-3].replace("/", ".").replace("\\", ".")
+            return f"{module}:app"
+    if await anyio.Path(root / "manage.py").exists():
+        return "manage.py"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# generate_dockerfile
+# ---------------------------------------------------------------------------
+DOCKERIGNORE = """\
+.git
+.gitignore
+.github
+node_modules
+__pycache__
+*.py[cod]
+.venv
+venv
+target
+dist
+build
+.next
+out
+coverage
+.env
+.env.*
+!.env.example
+logs
+*.log
+nour-code-sessions.json
+Dockerfile*
+docker-compose*.yml
+README.md
+"""
+
+
+def _node_dockerfile(info: dict[str, Any], port: int) -> str:
+    manager = info["package_manager"]
+    node_version = info["node_version"]
+    lockfile = info["lockfile"]
+    install = {
+        "npm": "npm ci",
+        "pnpm": "npm i -g pnpm@9 && pnpm install --frozen-lockfile",
+        "yarn": "yarn install --frozen-lockfile",
+        "bun": "npm i -g bun && bun install --frozen-lockfile",
+    }[manager]
+    copy_manifest = f"COPY package.json {lockfile + ' ' if lockfile else ''}./"
+    if not lockfile:
+        install = {
+            "npm": "npm install",
+            "pnpm": "npm i -g pnpm@9 && pnpm install",
+            "yarn": "yarn install",
+            "bun": "npm i -g bun && bun install",
+        }[manager]
+        copy_manifest = "COPY package.json ./"
+
+    if info.get("framework") == "nextjs":
+        return f"""# syntax=docker/dockerfile:1
+# generated by nour-code production_skill
+FROM node:{node_version}-alpine AS base
+ENV NODE_ENV=production
+WORKDIR /app
+
+FROM base AS deps
+{copy_manifest}
+RUN {install}
+
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN {"npm run build" if manager == "npm" else f"{manager} build"}
+
+FROM base AS runner
+RUN addgroup --system --gid 1001 nodejs \\
+ && adduser --system --uid 1001 nextjs
+WORKDIR /app
+ENV PORT={port} \\
+    HOSTNAME=0.0.0.0 \\
+    NEXT_TELEMETRY_DISABLED=1
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public 2>/dev/null || true
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+USER nextjs
+EXPOSE {port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \\
+  CMD wget -qO- "http://127.0.0.1:${{PORT}}/api/health" >/dev/null 2>&1 || exit 1
+CMD ["node", "server.js"]
+"""
+
+    start_script = (info.get("scripts") or {}).get("start") or "node server.js"
+    start_cmd = " ".join(f'"{part}"' for part in _shell_words(start_script))
+    return f"""# syntax=docker/dockerfile:1
+# generated by nour-code production_skill
+FROM node:{node_version}-alpine AS base
+ENV NODE_ENV=production
+WORKDIR /app
+
+FROM base AS deps
+{copy_manifest}
+RUN {install}
+
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN if [ -f tsconfig.json ]; then {"npm run build" if manager == "npm" else f"{manager} build"}; fi
+
+FROM base AS runner
+RUN addgroup --system --gid 1001 nodejs \\
+ && adduser --system --uid 1001 appuser
+COPY --from=builder --chown=appuser:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=appuser:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=appuser:nodejs /app .
+USER appuser
+ENV PORT={port}
+EXPOSE {port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \\
+  CMD wget -qO- "http://127.0.0.1:${{PORT}}/health" >/dev/null 2>&1 || exit 1
+CMD [{start_cmd}]
+"""
+
+
+def _python_dockerfile(info: dict[str, Any], port: int) -> str:
+    version = info["python_version"]
+    entrypoint = info.get("entrypoint")
+    if entrypoint == "manage.py":
+        cmd = f'CMD ["gunicorn", "--bind", "0.0.0.0:{port}", "--workers", "4", "--access-logfile", "-", "config.wsgi:application"]'
+    elif entrypoint:
+        cmd = f'CMD ["uvicorn", "{entrypoint}", "--host", "0.0.0.0", "--port", "{port}", "--proxy-headers"]'
+    else:
+        cmd = f'CMD ["python", "-m", "http.server", "{port}"]'
+    return f"""# syntax=docker/dockerfile:1
+# generated by nour-code production_skill
+FROM python:{version}-slim AS builder
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \\
+    PIP_NO_CACHE_DIR=1
+WORKDIR /app
+COPY requirements*.txt pyproject.toml* ./
+RUN --mount=type=cache,target=/root/.cache/pip \\
+    if [ -f requirements.txt ]; then pip install --prefix=/install -r requirements.txt; \\
+    elif [ -f pyproject.toml ]; then pip install --prefix=/install .; fi
+
+FROM python:{version}-slim AS runner
+ENV PYTHONUNBUFFERED=1 \\
+    PYTHONDONTWRITEBYTECODE=1 \\
+    PYTHONPATH=/app
+WORKDIR /app
+COPY --from=builder /install /usr/local
+COPY . .
+RUN useradd --create-home --uid 10001 --shell /bin/bash appuser \\
+ && chown -R appuser:appuser /app
+USER appuser
+EXPOSE {port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \\
+  CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:{port}/health').status == 200 else 1)"
+{cmd}
+"""
+
+
+def _rust_dockerfile(info: dict[str, Any], port: int) -> str:
+    name = info.get("name") or "app"
+    return f"""# syntax=docker/dockerfile:1
+# generated by nour-code production_skill
+FROM rust:1.82-bookworm AS builder
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev \\
+ && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml Cargo.lock* ./
+RUN mkdir -p src && echo "fn main() {{}}" > src/main.rs && cargo build --release && rm -rf src
+COPY . .
+RUN touch src/main.rs && cargo build --release --locked
+
+FROM debian:bookworm-slim AS runner
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libpq5 curl \\
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/{name} /usr/local/bin/{name}
+RUN useradd --create-home --uid 10001 appuser
+USER appuser
+ENV RUST_LOG=info
+EXPOSE {port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \\
+  CMD curl -f "http://127.0.0.1:{port}/health" || exit 1
+CMD ["{name}"]
+"""
+
+
+def _shell_words(command: str) -> list[str]:
+    return [word for word in command.split() if word]
+
+
+async def _generate_dockerfile(
+    ctx: dict[str, Any], project_root: str, runtime: str = "auto", port: int = 0, overwrite: bool = False
+) -> dict[str, Any]:
+    permissions = ctx.get("permissions")
+    if permissions is None:  # pragma: no cover - wiring guarantee
+        return {"ok": False, "error": "permissions unavailable"}
+    try:
+        root = permissions.resolve_path(project_root, must_exist=True, kind="dir")
+    except PermissionError as exc:
+        return {"ok": False, "error": f"path rejected: {exc}"}
+
+    info = await _detect_project(ctx, root, runtime)
+    if info["runtime"] == "generic":
+        return {
+            "ok": False,
+            "error": "could not detect the runtime (no package.json, requirements.txt/pyproject.toml or Cargo.toml). "
+            "Pass runtime='node' or runtime='python' explicitly.",
+        }
+
+    port = int(port) if port else int(info.get("port") or 8000)
+    builders = {"node": _node_dockerfile, "python": _python_dockerfile, "rust": _rust_dockerfile}
+    content = builders[info["runtime"]](info, port)
+
+    target = root / "Dockerfile"
+    import anyio
+
+    exists = await anyio.Path(target).is_file()
+    if exists and not overwrite:
+        return {
+            "ok": True,
+            "tool": "generate_dockerfile",
+            "path": str(target),
+            "written": False,
+            "reason": "Dockerfile already exists; pass overwrite=true to replace it",
+            "runtime": info["runtime"],
+            "preview": content,
+        }
+
+    outcome = await _write_source(ctx, target, content, dry_run=False)
+    dockerignore_outcome: dict[str, Any] = {}
+    ignore_path = root / ".dockerignore"
+    if not await anyio.Path(ignore_path).is_file():
+        dockerignore_outcome = await _write_source(ctx, ignore_path, DOCKERIGNORE, dry_run=False)
+
+    notes = [
+        f"Multi-stage build for {info['runtime']}"
+        + (f" ({info['framework']} standalone output)" if info.get("framework") else ""),
+        "Runs as a non-root user and exposes a healthcheck on port " + str(port),
+    ]
+    if info["runtime"] == "node" and not info.get("lockfile"):
+        notes.append("No lockfile found: commit one so builds are reproducible (npm ci).")
+    if info["runtime"] == "node" and info.get("framework") == "nextjs":
+        notes.append("Requires `output: 'standalone'` in next.config.js (add it if missing).")
+    if info["runtime"] == "python" and not info.get("entrypoint"):
+        notes.append("No ASGI entrypoint detected: adjust the CMD to your app (e.g. uvicorn package.module:app).")
+    if dockerignore_outcome:
+        notes.append("Wrote .dockerignore to keep the build context small.")
+
+    return {
+        "ok": True,
+        "tool": "generate_dockerfile",
+        "path": str(target),
+        "written": bool(outcome.get("written")),
+        "runtime": info["runtime"],
+        "framework": info.get("framework"),
+        "port": port,
+        "detected": {k: v for k, v in info.items() if k not in {"package_json", "scripts"}},
+        "notes": notes,
+        "preview": "\n".join(content.splitlines()[:40]),
+        "write": outcome,
+    }
