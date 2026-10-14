@@ -173,6 +173,7 @@ class PermissionManager:
         """Load ``permissions.yaml``, falling back to a safe default scope."""
         warnings: list[str] = []
         raw: dict[str, Any] | None = None
+        using_defaults = False
         try:
             if path.is_file():
                 text = path.read_text(encoding="utf-8")
@@ -183,12 +184,15 @@ class PermissionManager:
             else:
                 warnings.append(f"permissions file not found at {path}; using built-in defaults")
                 raw = yaml.safe_load(DEFAULT_YAML)
+                using_defaults = True
         except (OSError, UnicodeDecodeError) as exc:
             warnings.append(f"could not read {path}: {exc}; using built-in defaults")
             raw = yaml.safe_load(DEFAULT_YAML)
+            using_defaults = True
         except (yaml.YAMLError, TypeError) as exc:
             warnings.append(f"invalid permissions file {path}: {exc}; using built-in defaults")
             raw = yaml.safe_load(DEFAULT_YAML)
+            using_defaults = True
 
         assert raw is not None
         overrides = list(root_overrides or [])
@@ -199,7 +203,11 @@ class PermissionManager:
         except Exception as exc:  # pydantic ValidationError
             warnings.append(f"permissions file rejected ({exc}); using built-in defaults")
             config = PermissionConfig.model_validate(yaml.safe_load(DEFAULT_YAML))
-            config.allowed_roots = ["."]
+            config.allowed_roots = [str(working_dir)]
+        if using_defaults:
+            # Fail safe: the built-in scope is the working directory, nothing else.
+            raw["allowed_roots"] = [str(working_dir)]
+            config = PermissionConfig.model_validate(raw)
         return cls(config, working_dir=working_dir, warnings=warnings, source=path)
 
     def _resolve_roots(self, working_dir: Path) -> list[Path]:
@@ -261,8 +269,14 @@ class PermissionManager:
     # -- helpers -----------------------------------------------------------
     @staticmethod
     def _matches_any(path_str: str, patterns: Sequence[str]) -> str | None:
+        """Match a relative path against glob patterns, also trying its basename."""
+        base = path_str.rsplit("/", 1)[-1]
         for pattern in patterns:
-            if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(path_str, f"**/{pattern}"):
+            if (
+                fnmatch.fnmatch(path_str, pattern)
+                or fnmatch.fnmatch(path_str, f"**/{pattern}")
+                or fnmatch.fnmatch(base, pattern)
+            ):
                 return pattern
         return None
 
