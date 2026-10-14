@@ -64,10 +64,35 @@ class Usage:
 
 
 @dataclass(slots=True)
+class ModelOptions:
+    """Per-turn sampling overrides.
+
+    Every field defaults to ``None``, which means "keep the process-wide
+    :class:`~nour_code.config.Settings` value".  A turn can therefore ask for a
+    different temperature, a different model, or Qwen3 thinking mode without
+    mutating any global state.
+    """
+
+    model: str | None = None
+    temperature: float | None = None
+    num_ctx: int | None = None
+    num_predict: int | None = None
+    seed: int | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    repeat_penalty: float | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    stop: list[str] | None = None
+    enable_thinking: bool | None = None
+
+
+@dataclass(slots=True)
 class ChatResult:
     """A complete (non-streamed) chat completion."""
 
     content: str = ""
+    thinking: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = "stop"
     usage: Usage = field(default_factory=Usage)
@@ -80,7 +105,7 @@ class ChatResult:
 class StreamChunk:
     """One piece of a streamed completion."""
 
-    kind: str  # "token" | "tool_calls" | "usage" | "error"
+    kind: str  # "token" | "thinking" | "tool_calls" | "usage" | "error"
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage | None = None
@@ -138,23 +163,46 @@ class OllamaClient:
         temperature: float | None = None,
         num_ctx: int | None = None,
         max_iterations: int | None = None,
+        model: str | None = None,
+        options: ModelOptions | None = None,
     ) -> dict[str, Any]:
+        """Build the request body.
+
+        ``options`` carries per-turn sampling overrides (1.2.0); anything left as
+        ``None`` falls back to the process-wide :class:`Settings`.
+        """
+        overrides = options or ModelOptions()
         serialised: list[dict[str, Any]] = [
             m.to_payload() if isinstance(m, ChatMessage) else dict(m) for m in messages
         ]
         payload: dict[str, Any] = {
-            "model": self.settings.model,
+            "model": model or self.settings.model,
             "messages": serialised,
             "stream": stream,
             "options": {
-                "num_ctx": num_ctx if num_ctx is not None else self.settings.num_ctx,
-                "temperature": self.settings.temperature if temperature is None else temperature,
+                "num_ctx": overrides.num_ctx if overrides.num_ctx is not None else (num_ctx if num_ctx is not None else self.settings.num_ctx),
+                "temperature": overrides.temperature if overrides.temperature is not None else (self.settings.temperature if temperature is None else temperature),
             },
         }
-        if self.settings.num_predict is not None:
-            payload["options"]["num_predict"] = self.settings.num_predict
-        if self.settings.seed is not None:
-            payload["options"]["seed"] = self.settings.seed
+
+        def _set(key: str, value: Any, fallback: Any) -> None:
+            chosen = fallback if value is None else value
+            if chosen is not None:
+                payload["options"][key] = chosen
+
+        _set("num_predict", overrides.num_predict, self.settings.num_predict)
+        _set("seed", overrides.seed, self.settings.seed)
+        _set("top_p", overrides.top_p, self.settings.top_p)
+        _set("top_k", overrides.top_k, self.settings.top_k)
+        _set("repeat_penalty", overrides.repeat_penalty, self.settings.repeat_penalty)
+        _set("presence_penalty", overrides.presence_penalty, self.settings.presence_penalty)
+        _set("frequency_penalty", overrides.frequency_penalty, self.settings.frequency_penalty)
+        _set("enable_thinking", overrides.enable_thinking, self.settings.enable_thinking)
+
+        stop = overrides.stop if overrides.stop is not None else self.settings.stop_sequences
+        if stop:
+            payload["options"]["stop"] = list(stop)
+
         tool_list = list(tools or [])
         if tool_list:
             payload["tools"] = tool_list
@@ -282,8 +330,12 @@ class OllamaClient:
         *,
         temperature: float | None = None,
         num_ctx: int | None = None,
+        model: str | None = None,
+        options: ModelOptions | None = None,
     ) -> ChatResult:
-        payload = self.build_payload(messages, tools, stream=False, temperature=temperature, num_ctx=num_ctx)
+        payload = self.build_payload(
+            messages, tools, stream=False, temperature=temperature, num_ctx=num_ctx, model=model, options=options
+        )
         started = time.perf_counter()
         data = await self._post_with_retry(self.settings.chat_completions_url, payload)
         latency_ms = (time.perf_counter() - started) * 1000.0
@@ -329,8 +381,12 @@ class OllamaClient:
         *,
         temperature: float | None = None,
         num_ctx: int | None = None,
+        model: str | None = None,
+        options: ModelOptions | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        payload = self.build_payload(messages, tools, stream=True, temperature=temperature, num_ctx=num_ctx)
+        payload = self.build_payload(
+            messages, tools, stream=True, temperature=temperature, num_ctx=num_ctx, model=model, options=options
+        )
         url = self.settings.chat_completions_url
         started = time.perf_counter()
         pending: dict[int, dict[str, Any]] = {}
