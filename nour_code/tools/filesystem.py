@@ -156,7 +156,7 @@ async def read_file(args: ReadFileArgs, ctx: ToolContext) -> ToolResult:
     perms = ctx.permissions
     assert perms is not None
     path = perms.resolve_path(args.path, must_exist=True, kind="file")
-    max_bytes = min(perms.config.filesystem.max_read_bytes, max(args.max_chars, 1) * 4)
+    max_bytes = perms.config.filesystem.max_read_bytes
     try:
         raw = await _read_bytes(path, ctx, max_bytes)
     except PermissionDeniedError:
@@ -365,7 +365,7 @@ async def search_files(args: SearchFilesArgs, ctx: ToolContext) -> ToolResult:
 async def delete_file(args: DeleteFileArgs, ctx: ToolContext) -> ToolResult:
     perms = ctx.permissions
     assert perms is not None
-    path = perms.resolve_path(args.path, must_exist=True)
+    path = perms.resolve_path(args.path, must_exist=True, kind="any")
 
     for root in perms.roots:
         if path == root:
