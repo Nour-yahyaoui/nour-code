@@ -199,7 +199,7 @@ class AuditLog:
 # Metrics
 # ---------------------------------------------------------------------------
 class _NoopMetric:
-    def labels(self, *_args: Any, **_kwargs: Any) -> "_NoopMetric":
+    def labels(self, *_args: Any, **_kwargs: Any) -> _NoopMetric:
         return self
 
     def inc(self, *_args: Any, **_kwargs: Any) -> None:

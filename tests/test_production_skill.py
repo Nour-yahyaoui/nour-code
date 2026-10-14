@@ -6,13 +6,8 @@ import ast
 import json
 from pathlib import Path
 
-import anyio
-import pytest
 import yaml
-
 from nour_code.tools import ToolContext
-
-from tests.conftest import FakeModel
 
 
 def context(container) -> ToolContext:
@@ -272,6 +267,7 @@ async def test_generate_dockerfile_respects_existing_file(container, sandbox: Pa
     (sandbox / "requirements.txt").write_text("fastapi\n")
     (sandbox / "Dockerfile").write_text("FROM scratch\n")
     first = await invoke(container, "generate_dockerfile", project_root=str(sandbox))
+    assert first.ok, first.error
     assert first.output["written"] is False
     assert (sandbox / "Dockerfile").read_text() == "FROM scratch\n"
 

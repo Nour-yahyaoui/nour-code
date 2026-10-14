@@ -14,7 +14,7 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -72,7 +72,7 @@ class Container:
     started_at: float
 
     @classmethod
-    async def create(cls, settings: Settings) -> "Container":
+    async def create(cls, settings: Settings) -> Container:
         log = setup_logging(settings)
         log.info("starting %s %s", APP_NAME, __version__, extra=settings.describe())
 
@@ -346,7 +346,7 @@ async def _sse_stream(container: Container, session: Session, payload: ChatReque
         while True:
             try:
                 frame = await asyncio.wait_for(queue.get(), timeout=KEEPALIVE_SECONDS)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield ": keepalive\n\n"
                 continue
             if frame is None:

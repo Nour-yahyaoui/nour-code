@@ -13,12 +13,10 @@ All filesystem access goes through :mod:`pathlib` / :class:`anyio.Path` — neve
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import re
 import stat
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 

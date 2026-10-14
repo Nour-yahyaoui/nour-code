@@ -94,7 +94,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "Session | None":
+    def from_dict(cls, raw: dict[str, Any]) -> Session | None:
         try:
             messages: list[ChatMessage] = []
             for item in raw.get("messages") or []:

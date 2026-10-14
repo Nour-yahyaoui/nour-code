@@ -137,7 +137,7 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def _finalise(self) -> "Settings":
+    def _finalise(self) -> Settings:
         self.working_dir = self.working_dir.expanduser()
         if not self.working_dir.is_absolute():
             self.working_dir = (PROJECT_ROOT / self.working_dir).resolve()

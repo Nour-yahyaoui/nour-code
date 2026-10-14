@@ -136,19 +136,19 @@ class ChatMessage(BaseModel):
     tool_call_id: str | None = None
 
     @classmethod
-    def user(cls, content: str) -> "ChatMessage":
+    def user(cls, content: str) -> ChatMessage:
         return cls(role="user", content=content)
 
     @classmethod
-    def assistant(cls, content: str | None, tool_calls: list[ToolCall] | None = None) -> "ChatMessage":
+    def assistant(cls, content: str | None, tool_calls: list[ToolCall] | None = None) -> ChatMessage:
         return cls(role="assistant", content=content, tool_calls=tool_calls or None)
 
     @classmethod
-    def tool_result(cls, tool_call_id: str, name: str, content: str) -> "ChatMessage":
+    def tool_result(cls, tool_call_id: str, name: str, content: str) -> ChatMessage:
         return cls(role="tool", content=content, tool_call_id=tool_call_id, name=name)
 
     @classmethod
-    def system(cls, content: str) -> "ChatMessage":
+    def system(cls, content: str) -> ChatMessage:
         return cls(role="system", content=content)
 
     def to_payload(self) -> dict[str, Any]:

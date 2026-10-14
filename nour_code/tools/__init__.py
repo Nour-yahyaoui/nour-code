@@ -73,15 +73,15 @@ class ToolResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def success(cls, output: Any = "", **metadata: Any) -> "ToolResult":
+    def success(cls, output: Any = "", **metadata: Any) -> ToolResult:
         return cls(ok=True, status="ok", output=output, metadata=metadata)
 
     @classmethod
-    def failure(cls, error: str, **metadata: Any) -> "ToolResult":
+    def failure(cls, error: str, **metadata: Any) -> ToolResult:
         return cls(ok=False, status="error", output="", error=error, metadata=metadata)
 
     @classmethod
-    def denied(cls, reason: str, output: Any = "", **metadata: Any) -> "ToolResult":
+    def denied(cls, reason: str, output: Any = "", **metadata: Any) -> ToolResult:
         return cls(ok=False, status="denied", output=output, error=reason, metadata=metadata)
 
     def render(self, max_chars: int) -> str:
@@ -317,7 +317,7 @@ class ToolRegistry:
 
         except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result = ToolResult.failure(
                 f"tool '{name}' timed out after {self.settings.skill_tool_timeout_seconds}s",
             )

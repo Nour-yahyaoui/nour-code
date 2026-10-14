@@ -7,9 +7,10 @@ directory listing, loaded skills and permission scope.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Stack hints
@@ -278,7 +279,7 @@ def build_system_prompt(
 ) -> str:
     """Assemble the system prompt for one turn."""
     parts: list[str] = [
-        f"You are **nour-code**, a local AI coding agent running against a Qwen3 8B model on Ollama.",
+        "You are **nour-code**, a local AI coding agent running against a Qwen3 8B model on Ollama.",
         "",
         f"Working directory: `{cwd}`",
         "",

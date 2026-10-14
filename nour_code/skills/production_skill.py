@@ -395,11 +395,9 @@ def find_js_functions(src: str) -> list[dict[str, Any]]:
 
 def _js_params(signature: str) -> list[str]:
     """Best-effort parameter names from a JS signature fragment."""
-    depth = 0
     start = -1
     for index, char in enumerate(signature):
         if char == "(":
-            depth = 1
             start = index + 1
             break
     if start == -1:
@@ -991,7 +989,7 @@ def _py_function_args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tupl
         if index >= defaults_offset:
             continue  # has a default: optional by contract
         pairs.append((arg.arg, arg.annotation))
-    for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+    for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=False):
         if default is not None:
             continue  # keyword-only with a default: optional by contract
         if arg.arg in {name for name, _ in pairs}:

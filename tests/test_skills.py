@@ -6,11 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from nour_code.skills import SkillsManager
 from nour_code.tools import ToolContext
-
-from tests.conftest import FakeModel
 
 
 def context(container, *, session_id: str = "test") -> ToolContext:

@@ -38,7 +38,7 @@ async def test_delete_session(settings) -> None:
 async def test_list_sessions_sorted_by_activity(settings) -> None:
     store = SessionStore(settings)
     old = await store.get_or_create("old")
-    new = await store.get_or_create("new")
+    await store.get_or_create("new")
     old.last_active = time.time() - 100
     listed = await store.list()
     assert [s.session_id for s in listed.sessions] == ["new", "old"]

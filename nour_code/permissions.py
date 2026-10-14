@@ -21,9 +21,9 @@ import fnmatch
 import os
 import re
 import shlex
-import sys
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -174,7 +174,7 @@ class PermissionManager:
 
     # -- construction ------------------------------------------------------
     @classmethod
-    def load(cls, path: Path, *, working_dir: Path, root_overrides: Iterable[Path] | None = None) -> "PermissionManager":
+    def load(cls, path: Path, *, working_dir: Path, root_overrides: Iterable[Path] | None = None) -> PermissionManager:
         """Load ``permissions.yaml``, falling back to a safe default scope."""
         warnings: list[str] = []
         raw: dict[str, Any] | None = None

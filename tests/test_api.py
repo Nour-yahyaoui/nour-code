@@ -7,9 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 from nour_code.main import create_app
-
 from tests.conftest import FakeModel
 
 

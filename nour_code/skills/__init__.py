@@ -25,10 +25,11 @@ import logging
 import sys
 import time
 import traceback
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -349,7 +350,7 @@ class SkillsManager:
                 handler(tool_name, dict(args or {}), skill_ctx),
                 timeout=self.settings.skill_tool_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "ok": False,
                 "error": f"skill '{skill.name}' timed out after {self.settings.skill_tool_timeout_seconds}s",

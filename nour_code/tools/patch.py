@@ -222,11 +222,11 @@ async def _run(
         return 127, "", f"{argv[0]} unavailable: {exc}"
     try:
         out, err = await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         try:
             out, err = await asyncio.wait_for(process.communicate(), timeout=5)
-        except asyncio.TimeoutError:  # pragma: no cover
+        except TimeoutError:  # pragma: no cover
             out, err = b"", b""
         return 124, out.decode("utf-8", "replace"), f"timeout after {timeout}s"
     return (

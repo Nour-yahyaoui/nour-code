@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-
 from nour_code.agent import Agent
 from nour_code.config import PROJECT_ROOT, Settings
 from nour_code.main import Container
@@ -80,11 +79,11 @@ class FakeModel:
         }
 
     # -- script control ----------------------------------------------------
-    def add_text(self, content: str) -> "FakeModel":
+    def add_text(self, content: str) -> FakeModel:
         self.script.append({"content": content})
         return self
 
-    def add_tool_call(self, name: str, **arguments: Any) -> "FakeModel":
+    def add_tool_call(self, name: str, **arguments: Any) -> FakeModel:
         self.script.append({"tool_calls": [{"name": name, "arguments": arguments}]})
         return self
 

@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
-
 from nour_code.models import ChatResponse, StreamEvent
-from nour_code.sessions import Session, SessionStore
-
+from nour_code.sessions import Session
 from tests.conftest import FakeModel
 
 

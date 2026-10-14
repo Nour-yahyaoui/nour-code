@@ -21,7 +21,6 @@ import asyncio
 import os
 import signal
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -77,7 +76,7 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
     try:
         await asyncio.wait_for(process.wait(), timeout=3)
         return
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
     try:
         if os.name == "nt":  # pragma: no cover - Windows-only branch
@@ -147,12 +146,12 @@ async def run_shell(args: RunShellArgs, ctx: ToolContext) -> ToolResult:
     timed_out = False
     try:
         raw_out, raw_err = await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timed_out = True
         await _terminate(process)
         try:
             raw_out, raw_err = await asyncio.wait_for(process.communicate(), timeout=10)
-        except (asyncio.TimeoutError, ProcessLookupError):  # pragma: no cover - stubborn process
+        except (TimeoutError, ProcessLookupError):  # pragma: no cover - stubborn process
             raw_out, raw_err = b"", b""
     except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
         await _terminate(process)

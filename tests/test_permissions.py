@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 import pytest
-
 from nour_code.permissions import (
     PermissionConfig,
     PermissionDeniedError,

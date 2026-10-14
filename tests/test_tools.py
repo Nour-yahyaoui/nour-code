@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
 from pathlib import Path
 
 import pytest
-
 from nour_code.tools import ToolContext, ToolResult, truncate_output
 from tests.conftest import FakeModel
 
@@ -220,7 +217,7 @@ UNIFIED_DIFF = """--- a/greet.py
 -    return "hi " + name
 +    greeting = "hello " + name
 +    return greeting
- 
+
 """
 
 
