@@ -470,3 +470,317 @@ def js_import_insert_line(lines: list[str]) -> int:
             continue
         break
     return last
+
+
+# ---------------------------------------------------------------------------
+# Python AST helpers
+# ---------------------------------------------------------------------------
+LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
+RISKY_PY_NODES = (ast.Try,)
+
+
+def _py_import_insert_index(tree: ast.Module) -> int:
+    """0-based line index where module-level imports should be inserted."""
+    body = list(tree.body)
+    index = 0
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant):
+        if isinstance(body[0].value.value, str):
+            index = body[0].end_lineno or 0
+    last_import = None
+    for node in body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            last_import = node
+        elif isinstance(node, ast.Expr) and isinstance(getattr(node, "value", None), ast.Constant):
+            continue  # stray docstring / string literal
+        elif last_import is not None:
+            break
+    if last_import is not None:
+        index = max(index, last_import.end_lineno or index)
+    return index
+
+
+def _py_has_logging_import(tree: ast.Module) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name == "logging" for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[0] == "logging":
+                return True
+    return False
+
+
+def _py_has_logger(tree: ast.Module) -> bool:
+    for node in ast.walk(tree):
+        target_names: list[str] = []
+        if isinstance(node, ast.Assign):
+            target_names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target_names = [node.target.id]
+            value = node.value
+        else:
+            continue
+        if "logger" not in target_names or value is None:
+            continue
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
+            if value.func.attr == "getLogger":
+                return True
+        if isinstance(value, ast.Name) and value.id in {"logger", "log"}:
+            return True
+    return False
+
+
+def _py_body_statements(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.stmt]:
+    body = list(node.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant):
+        if isinstance(body[0].value.value, str):
+            body = body[1:]
+    return body
+
+
+def _py_has_log_call(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
+            if child.func.attr in LOG_LEVELS:
+                return True
+    return False
+
+
+def _py_has_try(node: ast.AST) -> bool:
+    return any(isinstance(child, ast.Try) for child in ast.walk(node))
+
+
+def _py_is_risky(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Await):
+            return True
+        if isinstance(child, ast.Call):
+            func = child.func
+            name: str | None = None
+            if isinstance(func, ast.Name):
+                name = func.id
+            elif isinstance(func, ast.Attribute):
+                name = func.attr
+            if name and name.lower() in RISKY_PY_CALLS:
+                return True
+        if isinstance(child, ast.With):
+            return True
+    return False
+
+
+def _py_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    return [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _py_annotation_name(annotation: ast.AST | None) -> str | None:
+    """Return a simple builtin type name for an annotation, if it is one."""
+    if annotation is None:
+        return None
+    if isinstance(annotation, ast.Name):
+        return annotation.id if annotation.id in _VALIDATABLE_TYPES else None
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        return annotation.value if annotation.value in _VALIDATABLE_TYPES else None
+    return None
+
+
+_VALIDATABLE_TYPES = frozenset({"str", "int", "float", "bool", "list", "dict", "tuple", "set", "bytes", "Path"})
+
+
+# ---------------------------------------------------------------------------
+# add_logging
+# ---------------------------------------------------------------------------
+async def _add_logging_python(ctx: dict[str, Any], path: Path, source: str, level: str, dry_run: bool) -> dict[str, Any]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return {"ok": False, "error": f"cannot parse {path.name}: {exc.msg} (line {exc.lineno})"}
+
+    lines = source.splitlines()
+    insertions: list[tuple[int, list[str]]] = []
+    changes: dict[str, Any] = {"logger_added": False, "instrumented": []}
+
+    if not _py_has_logging_import(tree):
+        insertions.append((_py_import_insert_index(tree), ["import logging", ""]))
+        changes["logger_added"] = True
+    if not _py_has_logger(tree):
+        insertions.append((_py_import_insert_index(tree), ["logger = logging.getLogger(__name__)", ""]))
+        changes["logger_added"] = True
+
+    for node in _py_functions(tree):
+        statements = _py_body_statements(node)
+        if not statements:
+            continue
+        first = statements[0]
+        if first.lineno == node.lineno:
+            continue  # one-liner body: leave it alone rather than emit broken code
+        if _py_has_log_call(node):
+            continue
+        indent = _indent_of(lines[first.lineno - 1])
+        insertions.append(
+            (first.lineno - 1, [f'{indent}logger.{level}("{node.name}() called")'])
+        )
+        changes["instrumented"].append(node.name)
+
+    if not insertions:
+        return {
+            "ok": True,
+            "tool": "add_logging",
+            "file": str(path),
+            "language": "python",
+            "written": False,
+            "already_compliant": True,
+            "changes": changes,
+            "note": "file already has a logger and every function logs",
+        }
+
+    new_source = _join_lines(insert_lines(lines, insertions), source)
+    try:
+        ast.parse(new_source)
+    except SyntaxError as exc:
+        return {"ok": False, "error": f"refusing to write invalid Python: {exc.msg} (line {exc.lineno})"}
+
+    outcome = await _write_source(ctx, path, new_source, dry_run=dry_run)
+    return {
+        "ok": True,
+        "tool": "add_logging",
+        "file": str(path),
+        "language": "python",
+        "dry_run": dry_run,
+        "changes": changes,
+        "diff": _diff_summary(source, new_source),
+        "write": outcome,
+    }
+
+
+def _join_lines(lines: list[str], original: str) -> str:
+    text = "\n".join(lines)
+    if original.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def _js_balanced(src: str) -> bool:
+    mask = code_mask(src)
+    depth = 0
+    for index, char in enumerate(src):
+        if not mask[index]:
+            continue
+        if char in "{[(":
+            depth += 1
+        elif char in "}])":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _js_logger_block(kind: str) -> list[str]:
+    if kind == "pino":
+        return [
+            'import pino from "pino";',
+            "",
+            'const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });',
+            "",
+        ]
+    if kind == "winston":
+        return [
+            'import winston from "winston";',
+            "",
+            'const logger = winston.createLogger({',
+            '  level: process.env.LOG_LEVEL ?? "info",',
+            "  format: winston.format.json(),",
+            "  transports: [new winston.transports.Console()],",
+            "});",
+            "",
+        ]
+    return [
+        "// Structured logger — swap for pino/winston when the dependency is available.",
+        "const logger = {",
+        "  info: (message: string, meta?: unknown) =>",
+        '    process.stdout.write(`${JSON.stringify({ level: "info", message, meta, ts: new Date().toISOString() })}\\n`);',
+        "  error: (message: string, meta?: unknown) =>",
+        '    process.stderr.write(`${JSON.stringify({ level: "error", message, meta, ts: new Date().toISOString() })}\\n`);',
+        "};",
+        "",
+    ]
+
+
+def _js_logger_kind(source: str) -> str:
+    if re.search(r"""from\s+["']pino["']|require\(\s*["']pino["']\s*\)""", source):
+        return "pino"
+    if re.search(r"""from\s+["']winston["']|require\(\s*["']winston["']\s*\)""", source):
+        return "winston"
+    return "builtin"
+
+
+def _js_has_logger(source: str) -> bool:
+    return bool(
+        re.search(r"(?m)^\s*(?:const|let|var)\s+logger\b", source)
+        or re.search(r"(?m)^\s*import\s+.*\blogger\b", source)
+    )
+
+
+async def _add_logging_js(ctx: dict[str, Any], path: Path, source: str, level: str, dry_run: bool) -> dict[str, Any]:
+    lines = source.splitlines()
+    functions = find_js_functions(source)
+    insertions: list[tuple[int, list[str]]] = []
+    changes: dict[str, Any] = {"logger_added": False, "instrumented": []}
+
+    if not _js_has_logger(source):
+        kind = _js_logger_kind(source)
+        insertions.append((js_import_insert_line(lines), _js_logger_block(kind)))
+        changes["logger_added"] = True
+        changes["logger_kind"] = kind
+
+    for function in functions:
+        body = source[function["body_start"] : function["body_end"]]
+        if re.search(r"\blogger\.(info|debug|warn|warning|error)\s*\(", body):
+            continue
+        body_lines = [line for line in body.splitlines() if line.strip()]
+        if not body_lines:
+            continue
+        indent = _indent_of(body_lines[0])
+        insertions.append(
+            (function["body_line_start"], [f'{indent}logger.{level}("{function["name"]}() called");'])
+        )
+        changes["instrumented"].append(function["name"])
+
+    if not insertions:
+        return {
+            "ok": True,
+            "tool": "add_logging",
+            "file": str(path),
+            "language": _language(path),
+            "written": False,
+            "already_compliant": True,
+            "changes": changes,
+            "note": "file already has a logger and every function logs",
+        }
+
+    new_source = _join_lines(insert_lines(lines, insertions), source)
+    if not _js_balanced(new_source):
+        return {"ok": False, "error": "refusing to write JS/TS with unbalanced braces"}
+
+    outcome = await _write_source(ctx, path, new_source, dry_run=dry_run)
+    return {
+        "ok": True,
+        "tool": "add_logging",
+        "file": str(path),
+        "language": _language(path),
+        "dry_run": dry_run,
+        "changes": changes,
+        "diff": _diff_summary(source, new_source),
+        "write": outcome,
+    }
+
+
+async def _add_logging(ctx: dict[str, Any], file_path: str, level: str = "info", dry_run: bool = False) -> dict[str, Any]:
+    result = await _read_source(ctx, file_path, allowed=SUPPORTED_SUFFIXES)
+    if isinstance(result, dict):
+        return result
+    path, source = result
+    language = _language(path)
+    if language == "python":
+        return await _add_logging_python(ctx, path, source, level, dry_run)
+    return await _add_logging_js(ctx, path, source, level, dry_run)
