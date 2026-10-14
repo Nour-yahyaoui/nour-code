@@ -327,7 +327,10 @@ function initSplitters() {
   const gutter = $('vGutter');
 
   const savedWidth = Number(localStorage.getItem('nour.ui.chatWidth'));
-  chat.style.width = savedWidth ? `${savedWidth}px` : `${Math.round(workspace.clientWidth * 0.58)}px`;
+  const defaultWidth = Math.round(workspace.clientWidth * 0.58);
+  if (savedWidth > 320) chat.style.width = `${savedWidth}px`;
+  else if (defaultWidth > 320) chat.style.width = `${defaultWidth}px`;
+  // otherwise keep the 58% CSS default (layout not measured yet)
 
   let dragging = false;
   let startX = 0;
@@ -388,6 +391,12 @@ function initSplitters() {
     const max = Math.max(min, consolePane.clientHeight - 140);
     const height = Math.min(max, Math.max(min, startHeight - (event.clientY - startY)));
     inspector.style.height = `${height}px`;
+  });
+
+  window.addEventListener('resize', () => {
+    const max = Math.max(320, workspace.clientWidth - 360);
+    const width = chat.getBoundingClientRect().width;
+    if (width > max) chat.style.width = `${max}px`;
   });
 
   const vStop = () => {
