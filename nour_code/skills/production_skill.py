@@ -1554,7 +1554,7 @@ def _github_workflow(info: dict[str, Any]) -> str:
     steps:
       - uses: actions/checkout@v4
 {setup}
-      - run: {install}
+{install}
       - run: {"npm audit --audit-level=high" if manager == "npm" else manager + " audit"}
         continue-on-error: true
 """
