@@ -140,3 +140,37 @@ def test_setup_logging_creates_files(tmp_path: Path) -> None:
     logger = setup_logging(settings)
     assert logger.level == logging.DEBUG
     assert (tmp_path / "logs" / "nour-code.log").parent.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# metrics
+# ---------------------------------------------------------------------------
+def test_metrics_disabled_is_a_noop() -> None:
+    metrics = Metrics(enabled=False)
+    metrics.observe_model(model="qwen3:8b", latency_s=0.5, prompt_tokens=10, completion_tokens=5, outcome="ok")
+    metrics.observe_tool(tool="read_file", status="ok", latency_s=0.01)
+    metrics.errors.labels(where="agent", type="model").inc()
+    with pytest.raises(RuntimeError, match="metrics disabled"):
+        metrics.render()
+
+
+def test_metrics_render_exposes_counters() -> None:
+    metrics = Metrics(enabled=True)
+    metrics.observe_model(model="qwen3:8b", latency_s=0.25, prompt_tokens=100, completion_tokens=20, outcome="ok")
+    metrics.observe_tool(tool="read_file", status="ok", latency_s=0.01)
+    metrics.observe_tool(tool="run_shell", status="denied", latency_s=0.02)
+    body, content_type = metrics.render()
+    text = body.decode("utf-8")
+    assert content_type.startswith("text/plain")
+    assert 'nour_code_model_calls_total{model="qwen3:8b",outcome="ok"} 1.0' in text
+    assert 'nour_code_model_tokens_total{direction="prompt",model="qwen3:8b"} 100.0' in text
+    assert 'nour_code_tool_calls_total{status="ok",tool="read_file"} 1.0' in text
+    assert 'nour_code_tool_calls_total{status="denied",tool="run_shell"} 1.0' in text
+    assert "nour_code_model_latency_seconds" in text
+
+
+def test_metrics_ignores_zero_token_counts() -> None:
+    metrics = Metrics(enabled=True)
+    metrics.observe_model(model="qwen3:8b", latency_s=0.1, prompt_tokens=0, completion_tokens=0, outcome="ok")
+    text = metrics.render()[0].decode("utf-8")
+    assert "nour_code_model_tokens_total" not in text
