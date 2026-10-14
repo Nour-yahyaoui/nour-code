@@ -40,7 +40,7 @@ from .models import (
     ToolCallRecord,
     new_id,
 )
-from .ollama_client import ChatResult, OllamaClient, OllamaError, Usage
+from .ollama_client import ChatResult, ModelOptions, OllamaClient, OllamaError, Usage
 from .permissions import PermissionDeniedError, PermissionManager
 from .prompts import (
     PLACEHOLDER_REGEX,
@@ -384,6 +384,8 @@ class Agent:
         emit: Callable[[StreamEvent], Awaitable[None]],
         state: TurnState,
         iteration: int,
+        options: ModelOptions | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> tuple[str, str, list[ToolCall], Usage, str]:
         content: list[str] = []
         thinking: list[str] = []
@@ -391,7 +393,8 @@ class Agent:
         usage = Usage()
         finish = "stop"
         started = time.perf_counter()
-        async for chunk in self.client.stream_chat(messages, self.registry.schemas()):
+        schemas = tools if tools is not None else self.registry.schemas()
+        async for chunk in self.client.stream_chat(messages, schemas, options=options):
             if chunk.kind == "thinking":
                 thinking.append(chunk.text)
                 await emit(StreamEvent(type="thinking", data={"text": chunk.text, "iteration": iteration}))
@@ -416,9 +419,15 @@ class Agent:
         return "".join(content), "".join(thinking), calls, usage, finish
 
     async def _sync_iteration(
-        self, messages: list[ChatMessage], state: TurnState, iteration: int
+        self,
+        messages: list[ChatMessage],
+        state: TurnState,
+        iteration: int,
+        options: ModelOptions | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> tuple[str, str, list[ToolCall], Usage, str]:
-        result: ChatResult = await self.client.chat(messages, self.registry.schemas())
+        schemas = tools if tools is not None else self.registry.schemas()
+        result: ChatResult = await self.client.chat(messages, schemas, options=options)
         state.usage = state.usage + result.usage
         state.model_calls += 1
         self._log_model_call(state, result.usage, result.latency_ms, iteration, "ok")
@@ -712,7 +721,10 @@ class Agent:
         verify: bool | None = None,
         system_extra: str | None = None,
         tools: list[str] | None = None,
-        model_options: Any = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+        enable_thinking: bool | None = None,
     ) -> AsyncIterator[StreamEvent]:
         queue: list[StreamEvent] = []
 
@@ -726,6 +738,17 @@ class Agent:
         if production:
             session.production_ready = True
         state.approval_mode = (approval_mode or self.settings.approval_mode or "off").lower()
+        options = ModelOptions(
+            model=model,
+            temperature=temperature,
+            seed=seed,
+            enable_thinking=enable_thinking,
+        )
+        if tools:
+            allowed = set(tools)
+            schemas = [schema for schema in self.registry.schemas() if schema.get("name") in allowed]
+        else:
+            schemas = None
         # Registered on the container so POST /sessions/{id}/approve can reach it.
         self.approvals.create(session.session_id, emit=emit)
 
@@ -748,10 +771,12 @@ class Agent:
                     messages = self._messages_for_model(session, system)
                     if stream:
                         content, thought, calls, _usage, finish = await self._stream_iteration(
-                            messages, emit, state, iteration
+                            messages, emit, state, iteration, options=options, tools=schemas
                         )
                     else:
-                        content, thought, calls, _usage, finish = await self._sync_iteration(messages, state, iteration)
+                        content, thought, calls, _usage, finish = await self._sync_iteration(
+                            messages, state, iteration, options=options, tools=schemas
+                        )
                     if thought:
                         state.thinking_parts.append(thought)
 

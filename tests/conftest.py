@@ -69,6 +69,7 @@ class FakeModel:
         self.script: list[dict[str, Any]] = list(script or [])
         self.calls: list[dict[str, Any]] = []
         self.streamed: bool = False
+        self.last_options: Any = None
         self.health_payload: dict[str, Any] = {
             "reachable": True,
             "url": "http://localhost:11434",
@@ -121,15 +122,19 @@ class FakeModel:
         *,
         temperature: float | None = None,
         num_ctx: int | None = None,
+        model: str | None = None,
+        options: Any = None,
     ) -> ChatResult:
         self.calls.append({"messages": list(messages), "tools": list(tools or [])})
+        self.last_options = options
         entry = self._next()
         return ChatResult(
             content=entry.get("content", ""),
+            thinking=entry.get("thinking", ""),
             tool_calls=self._to_calls(entry),
             finish_reason="tool_calls" if entry.get("tool_calls") else "stop",
             usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-            model="qwen3:8b",
+            model=model or "qwen3:8b",
         )
 
     async def stream_chat(
@@ -139,10 +144,16 @@ class FakeModel:
         *,
         temperature: float | None = None,
         num_ctx: int | None = None,
+        model: str | None = None,
+        options: Any = None,
     ) -> AsyncIterator[StreamChunk]:
         self.streamed = True
         self.calls.append({"messages": list(messages), "tools": list(tools or [])})
+        self.last_options = options
         entry = self._next()
+        if entry.get("thinking"):
+            for text in _chunk_text(str(entry["thinking"])):
+                yield StreamChunk(kind="thinking", text=text)
         for text in _chunk_text(str(entry.get("content", ""))):
             yield StreamChunk(kind="token", text=text)
         calls = self._to_calls(entry)
