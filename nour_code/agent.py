@@ -263,3 +263,348 @@ class Agent:
                     )
                 )
             session.add(ChatMessage.tool_result(call_id, name, rendered))
+
+    # -- event helpers ------------------------------------------------------
+    async def _drain(self, queue: list[StreamEvent]) -> AsyncIterator[StreamEvent]:
+        while queue:
+            yield queue.pop(0)
+
+    async def _emit_skill_events(self, session: Session, emit: Callable[[StreamEvent], Awaitable[None]]) -> None:
+        """Announce loaded skills once per (re)load so clients can display them."""
+        version = self.skills.version
+        if session.metadata.get("skills_version") == version:
+            return
+        session.metadata["skills_version"] = version
+        for info in self.skills.info().skills:
+            await emit(StreamEvent(type="skill_loaded", data=info.model_dump(mode="json")))
+
+    # -- model iterations ---------------------------------------------------
+    def _log_model_call(self, state: TurnState, usage: Usage, latency_ms: float, iteration: int, outcome: str) -> None:
+        self.logger.info(
+            "model call",
+            extra={
+                "session_id": getattr(state, "session_id", "-"),
+                "iteration": iteration,
+                "latency_ms": round(latency_ms, 2),
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "model": self.settings.model,
+                "outcome": outcome,
+            },
+        )
+
+    async def _stream_iteration(
+        self,
+        messages: list[ChatMessage],
+        emit: Callable[[StreamEvent], Awaitable[None]],
+        state: TurnState,
+        iteration: int,
+    ) -> tuple[str, list[ToolCall], Usage, str]:
+        content: list[str] = []
+        calls: list[ToolCall] = []
+        usage = Usage()
+        finish = "stop"
+        started = time.perf_counter()
+        async for chunk in self.client.stream_chat(messages, self.registry.schemas()):
+            if chunk.kind == "token":
+                content.append(chunk.text)
+                await emit(StreamEvent(type="token", data={"text": chunk.text, "iteration": iteration}))
+            elif chunk.kind == "tool_calls":
+                calls = chunk.tool_calls
+                finish = chunk.finish_reason or "tool_calls"
+                if chunk.usage:
+                    usage = usage + chunk.usage
+            elif chunk.kind == "usage":
+                finish = chunk.finish_reason or "stop"
+                if chunk.usage:
+                    usage = usage + chunk.usage
+            elif chunk.kind == "error":
+                state.warnings.append(f"model stream error: {chunk.error}")
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        state.usage = state.usage + usage
+        state.model_calls += 1
+        self._log_model_call(state, usage, latency_ms, iteration, "ok")
+        return "".join(content), calls, usage, finish
+
+    async def _sync_iteration(
+        self, messages: list[ChatMessage], state: TurnState, iteration: int
+    ) -> tuple[str, list[ToolCall], Usage, str]:
+        result: ChatResult = await self.client.chat(messages, self.registry.schemas())
+        state.usage = state.usage + result.usage
+        state.model_calls += 1
+        self._log_model_call(state, result.usage, result.latency_ms, iteration, "ok")
+        return result.content, result.tool_calls, result.usage, result.finish_reason
+
+    # -- production-ready mode ---------------------------------------------
+    async def _production_candidates(self, session: Session, state: TurnState) -> list[Path]:
+        """Files the model touched, or the project's top-level sources as a fallback."""
+        candidates: list[Path] = []
+        for raw in dict.fromkeys(state.touched_files):
+            try:
+                path = self.permissions.resolve_path(raw, must_exist=True, kind="file")
+            except PermissionDeniedError:
+                continue
+            if path.suffix.lower() in SOURCE_SUFFIXES and path not in candidates:
+                candidates.append(path)
+        if candidates:
+            return candidates[: self.settings.production_max_files]
+
+        try:
+            root = self.permissions.resolve_path(str(session.working_dir), must_exist=True, kind="dir")
+        except PermissionDeniedError:
+            return []
+        try:
+            children = sorted(root.iterdir(), key=lambda p: p.name)
+        except OSError:
+            return []
+        for child in children:
+            if child.is_file() and child.suffix.lower() in SOURCE_SUFFIXES:
+                candidates.append(child)
+            if len(candidates) >= 5:
+                break
+        return candidates
+
+    async def _production_harden(
+        self,
+        session: Session,
+        state: TurnState,
+        ctx: ToolContext,
+        emit: Callable[[StreamEvent], Awaitable[None]],
+        *,
+        round_index: int,
+        user_message: str,
+    ) -> None:
+        """Run the production skill's hardening tools on the files that changed."""
+        if not self.settings.production_auto_harden or round_index > 0:
+            return
+
+        candidates = await self._production_candidates(session, state)
+        if not candidates:
+            state.warnings.append("production mode: no source files were touched, nothing to harden")
+            return
+
+        hardening_tools = [
+            name
+            for name in ("add_logging", "add_error_handling", "add_input_validation")
+            if name in self.registry.names()
+        ]
+        if not hardening_tools:
+            state.warnings.append("production mode: production_skill is not loaded, skipping hardening")
+            return
+
+        for path in candidates:
+            for tool_name in hardening_tools:
+                result = await self.registry.call(
+                    tool_name, {"file_path": str(path)}, ctx, iteration=state.iterations
+                )
+                state.tool_calls.append(
+                    ToolCallRecord(
+                        id=new_id("call_"),
+                        tool=tool_name,
+                        arguments={"file_path": str(path)},
+                        status=result.status,
+                        result=result.output if isinstance(result.output, str) else json.dumps(result.output, default=str)[:2000],
+                        error=result.error,
+                        duration_ms=round(result.duration_ms, 2),
+                        iteration=state.iterations,
+                        source="skill",
+                        skill=self.skills.owner_of(tool_name),
+                    )
+                )
+                await emit(
+                    StreamEvent(
+                        type="tool_result",
+                        data={
+                            "id": new_id("call_"),
+                            "tool": tool_name,
+                            "status": result.status,
+                            "result": (result.output if isinstance(result.output, str) else json.dumps(result.output, default=str))[:TOOL_EVENT_PREVIEW_CHARS],
+                            "error": result.error,
+                            "duration_ms": round(result.duration_ms, 2),
+                            "iteration": state.iterations,
+                            "skill": self.skills.owner_of(tool_name),
+                            "auto": "production_ready",
+                        },
+                    )
+                )
+
+        lowered = user_message.lower()
+        if any(token in lowered for token in ("docker", "container", "image")) and "generate_dockerfile" in self.registry.names():
+            result = await self.registry.call(
+                "generate_dockerfile", {"project_root": str(session.working_dir)}, ctx, iteration=state.iterations
+            )
+            state.tool_calls.append(
+                ToolCallRecord(
+                    id=new_id("call_"),
+                    tool="generate_dockerfile",
+                    arguments={"project_root": str(session.working_dir)},
+                    status=result.status,
+                    result=json.dumps(result.output, default=str)[:2000],
+                    error=result.error,
+                    duration_ms=round(result.duration_ms, 2),
+                    iteration=state.iterations,
+                    source="skill",
+                    skill=self.skills.owner_of("generate_dockerfile"),
+                )
+            )
+            await emit(
+                StreamEvent(
+                    type="tool_result",
+                    data={
+                        "id": new_id("call_"),
+                        "tool": "generate_dockerfile",
+                        "status": result.status,
+                        "result": json.dumps(result.output, default=str)[:TOOL_EVENT_PREVIEW_CHARS],
+                        "error": result.error,
+                        "auto": "production_ready",
+                    },
+                )
+            )
+        if any(token in lowered for token in (" ci", "pipeline", "github action", "workflow")) and "generate_ci_pipeline" in self.registry.names():
+            result = await self.registry.call(
+                "generate_ci_pipeline",
+                {"project_root": str(session.working_dir), "target": "github"},
+                ctx,
+                iteration=state.iterations,
+            )
+            state.tool_calls.append(
+                ToolCallRecord(
+                    id=new_id("call_"),
+                    tool="generate_ci_pipeline",
+                    arguments={"project_root": str(session.working_dir), "target": "github"},
+                    status=result.status,
+                    result=json.dumps(result.output, default=str)[:2000],
+                    error=result.error,
+                    duration_ms=round(result.duration_ms, 2),
+                    iteration=state.iterations,
+                    source="skill",
+                    skill=self.skills.owner_of("generate_ci_pipeline"),
+                )
+            )
+
+    async def _production_scan(self, session: Session, state: TurnState) -> dict[str, Any]:
+        """Look for placeholder stubs left behind in the files that changed."""
+        offenders: list[str] = []
+        for path in await self._production_candidates(session, state):
+            try:
+                resolved = self.permissions.resolve_path(str(path), must_exist=True, kind="file")
+            except PermissionDeniedError:
+                continue
+            try:
+                text = await anyio.Path(resolved).read_text(errors="replace")
+            except OSError:
+                continue
+            for match in PLACEHOLDER_REGEX.finditer(text):
+                line = text.count("\n", 0, match.start()) + 1
+                offenders.append(f"{resolved}:{line}: {match.group(0)}")
+                break
+        return {"placeholders": bool(offenders), "offenders": offenders[:40], "count": len(offenders)}
+
+    async def _scan_signals(self, root: Path) -> dict[str, Any]:
+        """One bounded pass over the project collecting production signals."""
+        signals: dict[str, Any] = {key: [] for key in SIGNAL_PATTERNS}
+        scanned = 0
+        placeholder_hits: list[str] = []
+        test_files: list[str] = []
+        try:
+            resolved_root = self.permissions.resolve_path(str(root), must_exist=True, kind="dir")
+        except PermissionDeniedError:
+            return {"signals": signals, "scanned": 0, "placeholders": [], "test_files": []}
+
+        async for path in anyio.Path(resolved_root).rglob("*"):
+            if scanned >= MAX_SCAN_FILES:
+                break
+            try:
+                if not await path.is_file():
+                    continue
+            except OSError:
+                continue
+            if any(part in IGNORED_SCAN_DIRS for part in path.parts):
+                continue
+            if path.suffix.lower() not in SOURCE_SUFFIXES and path.name not in {"Dockerfile", "Makefile"}:
+                continue
+            try:
+                if (await path.stat()).st_size > MAX_SCAN_BYTES:
+                    continue
+            except OSError:
+                continue
+            try:
+                text = await path.read_text(errors="replace")
+            except OSError:
+                continue
+            scanned += 1
+            lowered_name = path.name.lower()
+            if (
+                "test" in lowered_name
+                or "spec" in lowered_name
+                or any(part in {"tests", "test", "__tests__"} for part in path.parts)
+            ):
+                test_files.append(str(path))
+            for key, pattern in SIGNAL_PATTERNS.items():
+                if key == "tests":
+                    continue
+                if pattern.search(text):
+                    signals[key].append(str(path))
+            match = PLACEHOLDER_REGEX.search(text)
+            if match:
+                line = text.count("\n", 0, match.start()) + 1
+                placeholder_hits.append(f"{path}:{line}: {match.group(0)}")
+        return {
+            "signals": signals,
+            "scanned": scanned,
+            "placeholders": placeholder_hits,
+            "test_files": test_files,
+        }
+
+    async def _production_status(self, session: Session, state: TurnState) -> dict[str, tuple[bool, str]]:
+        """Evaluate each checklist item against the real project state."""
+        root = session.working_dir
+        scan = await self._scan_signals(root)
+        signals = scan["signals"]
+        status: dict[str, tuple[bool, str]] = {}
+
+        def _mark(key: str, ok: bool, detail: str) -> None:
+            status[key] = (ok, detail)
+
+        _mark(
+            "logging",
+            bool(signals["logging"]),
+            f"found in {signals['logging'][0]}" if signals["logging"] else "no logger usage found",
+        )
+        _mark(
+            "error_handling",
+            bool(signals["error_handling"]),
+            f"found in {signals['error_handling'][0]}" if signals["error_handling"] else "no try/except or catch blocks",
+        )
+        _mark(
+            "input_validation",
+            bool(signals["input_validation"]),
+            f"found in {signals['input_validation'][0]}" if signals["input_validation"] else "no validation found",
+        )
+        _mark(
+            "config",
+            bool(signals["config"]),
+            f"found in {signals['config'][0]}" if signals["config"] else "no environment configuration found",
+        )
+        _mark(
+            "health",
+            bool(signals["health"]),
+            f"found in {signals['health'][0]}" if signals["health"] else "no /health endpoint found",
+        )
+        _mark(
+            "tests",
+            bool(scan["test_files"]) or bool(signals["tests"]),
+            f"{len(scan['test_files'])} test file(s)" if scan["test_files"] else "no test files found",
+        )
+        placeholders = scan["placeholders"]
+        _mark(
+            "no_placeholders",
+            not placeholders,
+            "clean" if not placeholders else f"{len(placeholders)} placeholder(s): {placeholders[0]}",
+        )
+        dockerfile = root / "Dockerfile"
+        _mark("dockerfile", dockerfile.is_file(), str(dockerfile) if dockerfile.is_file() else "no Dockerfile")
+        workflows = root / ".github" / "workflows"
+        has_ci = workflows.is_dir() and any(workflows.glob("*.y*ml"))
+        _mark("ci", bool(has_ci), str(workflows) if has_ci else "no .github/workflows found")
+        return status
