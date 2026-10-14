@@ -29,6 +29,7 @@ from typing import Any
 
 import anyio
 
+from .approvals import ApprovalRegistry, is_mutating
 from .config import Settings
 from .models import (
     ChatMessage,
@@ -88,6 +89,9 @@ class TurnState:
     model_calls: int = 0
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     thinking_parts: list[str] = field(default_factory=list)
+    approval_mode: str = "off"
+    approvals_requested: int = 0
+    approvals_rejected: list[str] = field(default_factory=list)
     touched_files: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     iterations: int = 0
@@ -110,6 +114,7 @@ class Agent:
         store: SessionStore,
         permissions: PermissionManager,
         skills: SkillsManager,
+        approvals: ApprovalRegistry | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.settings = settings
@@ -118,6 +123,7 @@ class Agent:
         self.store = store
         self.permissions = permissions
         self.skills = skills
+        self.approvals = approvals or ApprovalRegistry()
         self.logger = logger or logging.getLogger("nour_code.agent")
 
     # -- context plumbing ---------------------------------------------------
@@ -218,6 +224,57 @@ class Agent:
                     )
                 )
 
+            if self._needs_approval(name, state):
+                state.approvals_requested += 1
+                decision = await self._request_approval(
+                    session, state, tool=name, arguments=arguments or {}, iteration=iteration, skill=self.skills.owner_of(name), emit=emit
+                )
+                if decision != "approved":
+                    reason = {
+                        "rejected": "the user rejected this action",
+                        "timeout": f"no decision within {self.approvals.timeout_seconds:.0f}s",
+                        "cancelled": "the turn was cancelled",
+                    }.get(decision, decision)
+                    state.approvals_rejected.append(f"{name}: {reason}")
+                    result = ToolResult.denied(f"DENIED: {reason}")
+                    rendered = (
+                        f"DENIED: {reason}. Do not retry this call; either propose something else "
+                        "or explain to the user what you would do instead."
+                    )
+                    session.tool_call_count += 1
+                    record = ToolCallRecord(
+                        id=call_id,
+                        tool=name,
+                        arguments=arguments or {},
+                        status=result.status,
+                        result="",
+                        error=reason,
+                        duration_ms=0.0,
+                        iteration=iteration,
+                        source="builtin",
+                        skill=self.skills.owner_of(name),
+                    )
+                    state.tool_calls.append(record)
+                    if emit is not None:
+                        await emit(
+                            StreamEvent(
+                                type="tool_result",
+                                data={
+                                    "id": call_id,
+                                    "tool": name,
+                                    "status": result.status,
+                                    "result": "",
+                                    "error": reason,
+                                    "duration_ms": 0.0,
+                                    "iteration": iteration,
+                                    "skill": record.skill,
+                                    "rejected": True,
+                                },
+                            )
+                        )
+                    session.add(ChatMessage.tool_result(call_id, name, rendered))
+                    continue
+
             if parse_error is not None:
                 result = ToolResult.failure(parse_error)
                 rendered = f"ERROR: {parse_error}. Reply with a tool call whose arguments are valid JSON."
@@ -265,6 +322,32 @@ class Agent:
                     )
                 )
             session.add(ChatMessage.tool_result(call_id, name, rendered))
+
+    # -- approvals ----------------------------------------------------------
+    def _needs_approval(self, tool: str, state: TurnState) -> bool:
+        """Whether this call must be confirmed by a human before it runs."""
+        mode = state.approval_mode
+        if mode == "off":
+            return False
+        if mode == "all":
+            return True
+        return is_mutating(tool, skill=self.skills.owner_of(tool))
+
+    async def _request_approval(
+        self,
+        session: Session,
+        state: TurnState,
+        *,
+        tool: str,
+        arguments: dict[str, Any],
+        iteration: int,
+        skill: str | None,
+        emit: Callable[[StreamEvent], Awaitable[None]] | None,
+    ) -> str:
+        gate = self.approvals.get(session.session_id)
+        if gate is None:  # no gate (e.g. unit test without the HTTP layer)
+            return "approved"
+        return await gate.request(tool=tool, arguments=arguments, iteration=iteration, skill=skill, emit=emit)
 
     # -- event helpers ------------------------------------------------------
     async def _drain(self, queue: list[StreamEvent]) -> AsyncIterator[StreamEvent]:
@@ -625,6 +708,11 @@ class Agent:
         production_mode: bool | None,
         audit: Any,
         stream: bool,
+        approval_mode: str | None = None,
+        verify: bool | None = None,
+        system_extra: str | None = None,
+        tools: list[str] | None = None,
+        model_options: Any = None,
     ) -> AsyncIterator[StreamEvent]:
         queue: list[StreamEvent] = []
 
@@ -637,6 +725,9 @@ class Agent:
         production = detect_production_mode(user_message) if production_mode is None else production_mode
         if production:
             session.production_ready = True
+        state.approval_mode = (approval_mode or self.settings.approval_mode or "off").lower()
+        # Registered on the container so POST /sessions/{id}/approve can reach it.
+        self.approvals.create(session.session_id, emit=emit)
 
         session.add(ChatMessage.user(user_message))
         system = self._system_message(session, production)
@@ -738,6 +829,7 @@ class Agent:
                     + ", ".join(row["item"] for row in failed)
                 )
 
+        self.approvals.discard(session.session_id)
         session.trim(self.settings.max_history_messages)
         response = ChatResponse(
             session_id=session.session_id,
