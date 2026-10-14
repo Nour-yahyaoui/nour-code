@@ -370,7 +370,7 @@ class ToolRegistry:
                     extra={
                         "iteration": iteration,
                         "source": spec.kind if spec else "unknown",
-                        "skill": spec.skill,
+                        "skill": spec.skill if spec else None,
                     },
                 )
             )
