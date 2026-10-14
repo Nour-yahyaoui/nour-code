@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -122,10 +123,10 @@ def test_json_formatter_includes_exception_text() -> None:
     try:
         raise ValueError("boom")
     except ValueError:
-        record = logging.LogRecord("nour_code", logging.ERROR, "x.py", 1, "failed", (), None)
-        record.exc_info = logging.sys.exc_info() if hasattr(logging, "sys") else None
-        payload = json.loads(JsonFormatter().format(record))
+        record = logging.LogRecord("nour_code", logging.ERROR, "x.py", 1, "failed", (), sys.exc_info())
+    payload = json.loads(JsonFormatter().format(record))
     assert payload["message"] == "failed"
+    assert "ValueError: boom" in payload["exception"]
 
 
 def test_json_formatter_survives_odd_payloads() -> None:
