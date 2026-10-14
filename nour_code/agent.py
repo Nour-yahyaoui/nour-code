@@ -85,10 +85,11 @@ FILE_MUTATING_TOOLS = frozenset({"write_file", "apply_patch", "delete_file"})
 
 #: Command candidates per project marker, in priority order.
 VERIFY_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("pyproject.toml", "pytest -q"),
-    ("pytest.ini", "pytest -q"),
-    ("setup.py", "pytest -q"),
-    ("requirements.txt", "pytest -q"),
+    # `python -m pytest` also works when pytest is only installed in a venv.
+    ("pyproject.toml", "python -m pytest -q"),
+    ("pytest.ini", "python -m pytest -q"),
+    ("setup.py", "python -m pytest -q"),
+    ("requirements.txt", "python -m pytest -q"),
     ("package.json", "npm test --if-present"),
     ("Cargo.toml", "cargo test"),
     ("go.mod", "go test ./..."),

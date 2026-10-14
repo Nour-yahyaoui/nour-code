@@ -152,7 +152,7 @@ def test_verify_command_prefers_python(tmp_path: Path) -> None:
 
     (tmp_path / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
-    assert detect_verify_command(tmp_path) == "pytest -q"
+    assert detect_verify_command(tmp_path) == "python -m pytest -q"
 
 
 def test_verify_command_skips_package_json_without_a_test_script(tmp_path: Path) -> None:
@@ -171,7 +171,7 @@ async def test_verification_runs_the_project_checks(container, sandbox: Path) ->
     events = await collect(container, "hi", verify=True)
     verifications = [e for e in events if e.type == "verification"]
     assert verifications, "no verification event was emitted"
-    assert verifications[0].data["command"] == "pytest -q"
+    assert verifications[0].data["command"] == "python -m pytest -q"
     assert "exit_code" in verifications[0].data
 
     done = next(e for e in events if e.type == "done")
