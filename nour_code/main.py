@@ -637,3 +637,8 @@ refreshStatus();
 </body>
 </html>
 """
+
+
+#: Default ASGI application, so ``uvicorn nour_code.main:app`` works out of the box.
+#: Tests and embeddings should call :func:`create_app` with explicit settings instead.
+app = create_app()
