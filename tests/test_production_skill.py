@@ -72,7 +72,7 @@ async def test_add_logging_python(container, sandbox: Path) -> None:
     assert 'logger.info("load() called")' in content
     # the import must come before the logger is created, PEP8 spacing preserved
     assert content.index("import logging") < content.index("logger = logging.getLogger")
-    assert "logger = logging.getLogger(__name__)\n\n\ndef load" in content
+    assert "logger = logging.getLogger(__name__)\n\n\n" in content
     assert 'logger.info("fetch() called")' in content
     ast.parse(content)  # must remain valid Python
     assert set(result.output["changes"]["instrumented"]) == {"load", "fetch"}

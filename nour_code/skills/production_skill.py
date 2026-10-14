@@ -498,6 +498,17 @@ def _py_import_insert_index(tree: ast.Module) -> int:
     return index
 
 
+def _py_logger_lines(lines: list[str], index: int) -> list[str]:
+    """The ``logger = ...`` block, padded to two blank lines before the next statement."""
+    existing_blanks = 0
+    probe = index
+    while probe < len(lines) and not lines[probe].strip():
+        existing_blanks += 1
+        probe += 1
+    pad = max(1, 2 - existing_blanks)
+    return ["logger = logging.getLogger(__name__)", *[""] * pad]
+
+
 def _py_has_logging_import(tree: ast.Module) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -603,8 +614,8 @@ async def _add_logging_python(ctx: dict[str, Any], path: Path, source: str, leve
         insertions.append((_py_import_insert_index(tree), ["import logging", ""]))
         changes["logger_added"] = True
     if not _py_has_logger(tree):
-        # Two trailing blank lines: PEP8 wants two before a top-level definition.
-        insertions.append((_py_import_insert_index(tree), ["logger = logging.getLogger(__name__)", "", ""]))
+        index = _py_import_insert_index(tree)
+        insertions.append((index, _py_logger_lines(lines, index)))
         changes["logger_added"] = True
 
     for node in _py_functions(tree):
@@ -802,13 +813,14 @@ def apply_edits(lines: list[str], edits: list[tuple[int, int, list[str]]]) -> li
     return result
 
 
-def _py_logger_edits(tree: ast.Module) -> list[tuple[int, int, list[str]]]:
+def _py_logger_edits(tree: ast.Module, lines: list[str]) -> list[tuple[int, int, list[str]]]:
     """Edits that guarantee ``import logging`` + a module logger exist."""
     edits: list[tuple[int, int, list[str]]] = []
+    index = _py_import_insert_index(tree)
     if not _py_has_logging_import(tree):
-        edits.append((_py_import_insert_index(tree), 0, ["import logging", ""]))
+        edits.append((index, 0, ["import logging", ""]))
     if not _py_has_logger(tree):
-        edits.append((_py_import_insert_index(tree), 0, ["logger = logging.getLogger(__name__)", "", ""]))
+        edits.append((index, 0, _py_logger_lines(lines, index)))
     return edits
 
 
@@ -859,7 +871,7 @@ async def _add_error_handling_python(ctx: dict[str, Any], path: Path, source: st
             "note": "every risky function already has a try/except (or none were risky)",
         }
 
-    edits.extend(_py_logger_edits(tree))
+    edits.extend(_py_logger_edits(tree, lines))
     new_source = _join_lines(apply_edits(lines, edits), source)
     try:
         ast.parse(new_source)
