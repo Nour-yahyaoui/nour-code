@@ -573,3 +573,187 @@ SID=$(curl -s -X POST http://localhost:8000/chat/sync -H 'Content-Type: applicat
 curl -s -X POST http://localhost:8000/chat/sync -H 'Content-Type: application/json' \
   -d "{\"message\":\"what is the entrypoint?\",\"session_id\":\"$SID\"}" | jq -r .content
 ```
+
+## 12. Observability
+
+| Artefact | Path / endpoint | Content |
+|---|---|---|
+| Application log | `logs/nour-code.log` | JSON lines, rotating 10 MB × 5 (`ts`, `level`, `logger`, `message`, plus structured extras) |
+| Audit trail | `logs/nour-code-audit.jsonl` | One object per tool call: `ts`, `session_id`, `tool`, `args_hash`, `result_status`, `duration_ms`, `iteration`, `source`, `skill`, `error` |
+| Metrics | `GET /metrics` | `nour_code_requests_total`, `nour_code_model_calls_total`, `nour_code_model_latency_seconds`, `nour_code_model_tokens_total`, `nour_code_tool_calls_total`, `nour_code_tool_latency_seconds`, `nour_code_agent_iterations_total`, `nour_code_sessions_active`, `nour_code_errors_total` |
+| Health | `GET /health` | Ollama reachability, version, whether the model is pulled, loaded skills/tools, active sessions |
+
+Arguments are stored as a **SHA-256 fingerprint** (`args_hash`), never verbatim,
+so the audit trail can be shipped without leaking file contents. Every model call
+also logs `iteration`, `latency_ms`, `prompt_tokens` and `completion_tokens`.
+
+`/metrics` returns `503` when `prometheus-client` is not installed or
+`NOUR_CODE_METRICS_ENABLED=false` — the server works fine either way.
+
+```bash
+tail -f logs/nour-code.log | jq
+tail -1 logs/nour-code-audit.jsonl | jq
+```
+
+## 13. Docker
+
+The image talks to Ollama on the **host** via `host.docker.internal`.
+
+```bash
+docker build -t nour-code:latest .
+
+docker run --rm -p 8000:8000 \
+  --add-host=host.docker.internal:host-gateway \   # required on Linux
+  -v "$PWD/permissions.yaml:/app/permissions.yaml:ro" \
+  -v "$HOME/projects:/data/projects" \
+  -e NOUR_CODE_OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  nour-code:latest
+```
+
+Or with Compose (see `docker-compose.yml`):
+
+```bash
+docker compose up --build
+curl -s http://localhost:8000/health | jq
+```
+
+Mount the code you want the agent to work on and add that mount path to
+`allowed_roots` (e.g. `NOUR_CODE_ALLOWED_ROOTS=/data/projects`).
+
+> On Docker Desktop (macOS/Windows) `host.docker.internal` resolves
+> automatically; on Linux you need either `--add-host` (shown above) or
+> `extra_hosts: ["host.docker.internal:host-gateway"]`.
+
+## 14. Security model
+
+| Threat | Mitigation |
+|---|---|
+| Path traversal (`../../etc/passwd`) | Every path is resolved and must land inside an allowed root |
+| Symlink escape | Each existing path component is checked; a link that resolves outside the roots is refused |
+| Absolute-path / cross-platform escapes | `C:\…` paths are refused on POSIX hosts and vice versa |
+| Shell injection | Allow-list of executables + deny-list regexes + no multi-line commands + `cwd` validation + hard timeout with process-group kill |
+| Runaway commands | `timeout_seconds` clamped to `shell.max_timeout_seconds`; the whole process group is SIGTERM'd then SIGKILL'd (Windows: `taskkill /F /T`) |
+| Context blow-up | Tool output capped (100 KB), per-message history capped (20 KB), file reads capped (`filesystem.max_read_bytes`) |
+| Secret leakage | `filesystem.denied_globs` blocks `*.pem`, `.env`, ssh keys; audit logs store argument hashes; the secret scanner redacts evidence |
+| Destructive actions | `delete_file` disabled by default; deleting an allowed root is refused; directory deletion requires `recursive=true` |
+| Bad skills | Import errors, contract violations, duplicate tool names and runtime exceptions are contained: logged, skipped, never fatal |
+| Denied operations | Reported to the model as `DENIED: <reason>` so it can change strategy instead of looping |
+
+The agent is a **powerful tool running with your privileges** — review
+`permissions.yaml` before pointing it at anything you care about, prefer a
+dedicated sandbox root, and keep `network.allow_outbound: false` for fully
+offline work.
+
+## 15. Development & tests
+
+```bash
+pip install -r requirements-dev.txt
+
+pytest                       # 163 tests
+pytest -k security           # one area
+pytest --tb=short -q         # terse failures
+
+ruff check nour_code tests   # lint
+ruff format nour_code tests  # format (optional)
+```
+
+The suite runs entirely offline: the Ollama client is replaced by a scripted
+`FakeModel` (see `tests/conftest.py`) that replays tool calls and answers, so the
+agent loop, permissions, skills and HTTP layer are exercised without a GPU.
+
+```
+nour-code/
+├── nour_code/
+│   ├── __init__.py          # package metadata
+│   ├── __main__.py          # CLI (python -m nour_code)
+│   ├── main.py              # FastAPI app, routes, DI container, graceful shutdown
+│   ├── agent.py             # agentic loop, SSE events, production-ready mode
+│   ├── ollama_client.py     # async httpx wrapper (streaming + blocking)
+│   ├── tools/
+│   │   ├── __init__.py      # ToolRegistry: validate → authorise → run → audit
+│   │   ├── filesystem.py    # read/write/list/search/delete
+│   │   ├── shell.py         # allow-listed, timeout-ed shell execution
+│   │   └── patch.py         # git apply → patch → built-in diff engine
+│   ├── skills/
+│   │   ├── __init__.py      # loader, hot reload, dispatch
+│   │   ├── security_skill.py
+│   │   └── production_skill.py
+│   ├── permissions.py       # permissions.yaml + path/shell validation
+│   ├── sessions.py          # in-memory store, TTL sweeper, JSON persistence
+│   ├── prompts.py           # system prompt, stack hints, checklist
+│   ├── models.py            # pydantic v2 schemas
+│   ├── observability.py     # JSON logs, audit trail, Prometheus metrics
+│   ├── config.py            # NOUR_CODE_* settings
+│   └── version_check.py     # Python 3.11 guard
+├── tests/                   # 163 tests, no network required
+├── permissions.yaml
+├── requirements.txt         # pinned versions
+├── requirements-dev.txt
+├── pyproject.toml
+├── Dockerfile
+├── docker-compose.yml
+├── SKILL_TEMPLATE.py
+└── README.md
+```
+
+Add your own skills in `./skills/` (create the directory; it is picked up
+automatically) or point `NOUR_CODE_SKILLS_DIRS` somewhere else.
+
+## 16. Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `health` shows `"ollama_reachable": false` | Start Ollama (`ollama serve`) or fix `NOUR_CODE_OLLAMA_BASE_URL` |
+| `health` shows `"model_loaded": false` | `ollama pull qwen3:8b` (or your `NOUR_CODE_MODEL`) |
+| `DENIED: path … is outside the allowed roots` | Add the directory to `allowed_roots` or set `NOUR_CODE_ALLOWED_ROOTS` |
+| Warnings about Windows roots at startup | Expected on Linux/macOS — those roots do not exist here and are skipped. Add POSIX roots to silence it |
+| `git log --format` is refused | The spec's `format` deny pattern; see the note in `permissions.yaml` |
+| `tool 'delete_file' is disabled` | Set `tools.delete_file: true` in `permissions.yaml` |
+| `apply_patch` fails on every strategy | Check the diff header paths (`--- a/x`, `+++ b/y`) and the `-p` level; run with `dry_run: true` first |
+| Stream stalls during a long command | Keep-alives are sent every 15 s; make sure no proxy buffers SSE (`X-Accel-Buffering: no` is set) |
+| Model loops without answering | Lower `NOUR_CODE_MAX_ITERATIONS`, or make the prompt more specific; the response then comes back with `finish_reason: "max_iterations"` and a warning |
+| `502` from `/chat` | Ollama returned an error (bad model name, OOM with `num_ctx=16384`); check `logs/nour-code.log` |
+
+## 17. Assumptions & limitations
+
+Assumptions made where the brief left room for interpretation:
+
+1. **Ollama's OpenAI-compatible API** (`/v1/chat/completions`) is used for chat,
+   with `/api/tags` and `/api/version` for health checks — both are served by a
+   stock Ollama daemon. The API key is required by the protocol but ignored by
+   Ollama; `NOUR_CODE_OLLAMA_API_KEY` defaults to `ollama`.
+2. **Allowed roots** — the Windows roots from the spec are kept in
+   `permissions.yaml` for fidelity, but roots that do not exist on the current
+   host are skipped at load time and nour-code falls back to the working
+   directory plus `<cwd>/sandbox`. This makes the defaults safe and runnable on
+   Linux/macOS. Override with `NOUR_CODE_ALLOWED_ROOTS`.
+3. **Skills directory** — the bundled skills live in `nour_code/skills/` (as in
+   the requested layout) and `./skills/` is scanned too when it exists, so a
+   top-level `/skills` drop-in directory works out of the box.
+4. **The `format` deny pattern** also blocks `git log --format=…`; the YAML file
+   documents an anchored alternative.
+5. **Code transformations** (logging / error handling / validation) are
+   conservative and idempotent: one-liner function bodies, functions that
+   already contain `try`/`raise`, and files that would not parse afterwards are
+   left untouched and reported.
+6. **Production "refusal"** — the agent does not hide an answer that still
+   contains placeholders; it reports them in the checklist and the warnings so
+   nothing is silently swallowed.
+7. **Parallel tool calls** are off by default (`NOUR_CODE_PARALLEL_TOOL_CALLS=false`)
+   because qwen3:8b is more reliable one call at a time; the loop handles
+   multiple calls per response either way.
+8. **No global mutable state** — everything hangs off a `Container` built during
+   startup and injected with FastAPI dependencies; tests build isolated
+   containers with a fake model.
+9. **`num_ctx=16384` and `temperature=0.1`** are always sent in `options`;
+   `num_predict` and `seed` are only sent when configured.
+
+Known limitations:
+
+* Shell commands run through the platform shell, so pipes/redirects work but
+  multi-line scripts are rejected by design.
+* `apply_patch` needs `git` or `patch` for best results; the built-in engine
+  handles standard unified diffs with fuzzy hunk matching but not binary or
+  rename-only patches.
+* One agent turn is CPU-bound by the model; concurrency is limited by Ollama, not
+  by nour-code.
