@@ -873,6 +873,7 @@ class Agent:
         max_iterations: int | None = None,
         production_mode: bool | None = None,
         audit: Any = None,
+        approval_mode: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream the turn as SSE events (tokens arrive as the model emits them)."""
         async for event in self._turn(
@@ -882,6 +883,7 @@ class Agent:
             production_mode=production_mode,
             audit=audit,
             stream=True,
+            approval_mode=approval_mode,
         ):
             yield event
 
@@ -893,6 +895,7 @@ class Agent:
         max_iterations: int | None = None,
         production_mode: bool | None = None,
         audit: Any = None,
+        approval_mode: str | None = None,
     ) -> ChatResponse:
         """Run the turn to completion and return the whole response."""
         fallback = ChatResponse(session_id=session.session_id, content="", finished=False, finish_reason="error")
@@ -903,6 +906,7 @@ class Agent:
             production_mode=production_mode,
             audit=audit,
             stream=False,
+            approval_mode=approval_mode,
         ):
             if event.type == "done":
                 return ChatResponse.model_validate(event.data["response"])

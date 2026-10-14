@@ -27,6 +27,8 @@ from .agent import Agent
 from .approvals import ApprovalRegistry
 from .config import APP_NAME, Settings, load_settings
 from .models import (
+    ApprovalRequest,
+    ApprovalResponse,
     AuditResponse,
     ChatRequest,
     ChatResponse,
@@ -338,6 +340,7 @@ async def _sse_stream(container: Container, session: Session, payload: ChatReque
                 max_iterations=payload.max_iterations,
                 production_mode=payload.production_ready,
                 audit=container.audit,
+                approval_mode=payload.approval,
             ):
                 await queue.put(event.to_sse())
         except asyncio.CancelledError:
@@ -404,6 +407,7 @@ def _register_routes(app: FastAPI) -> None:
                     max_iterations=payload.max_iterations,
                     production_mode=payload.production_ready,
                     audit=container.audit,
+                    approval_mode="off",  # a blocking request cannot wait for a human
                 )
             finally:
                 with contextlib.suppress(Exception):
@@ -430,6 +434,60 @@ def _register_routes(app: FastAPI) -> None:
         if not deleted:
             raise HTTPException(status_code=404, detail=f"session {session_id!r} not found")
         return DeleteSessionResponse(ok=True, session_id=session_id, deleted=True)
+
+    @app.get(
+        "/sessions/{session_id}/approvals",
+        response_model=ApprovalResponse,
+        summary="List the tool calls waiting for a human decision",
+    )
+    async def list_approvals(session_id: str, container: ContainerDep) -> ApprovalResponse:
+        gate = container.approvals.get(session_id)
+        if gate is None:
+            raise HTTPException(status_code=404, detail=f"no turn is waiting for approvals in {session_id!r}")
+        return ApprovalResponse(
+            ok=True,
+            session_id=session_id,
+            pending=gate.pending,
+            detail=f"{len(gate.pending)} proposal(s) pending",
+        )
+
+    @app.post(
+        "/sessions/{session_id}/approve",
+        response_model=ApprovalResponse,
+        summary="Approve or reject a proposed tool call",
+    )
+    async def approve(session_id: str, payload: ApprovalRequest, container: ContainerDep) -> ApprovalResponse:
+        gate = container.approvals.get(session_id)
+        if gate is None:
+            raise HTTPException(status_code=404, detail=f"no turn is waiting for approvals in {session_id!r}")
+
+        decision = payload.decision
+        if decision in {"approve_all", "reject_all"}:
+            gate.auto_approve = decision == "approve_all"
+            resolved = gate.resolve_all("approved" if decision == "approve_all" else "rejected")
+            return ApprovalResponse(
+                ok=True,
+                session_id=session_id,
+                decision=decision,
+                resolved=resolved,
+                pending=gate.pending,
+                detail=f"{decision}: resolved {resolved} proposal(s)",
+            )
+
+        if not payload.proposal_id:
+            raise HTTPException(status_code=400, detail="proposal_id is required for a single decision")
+        resolved_ok = gate.resolve(payload.proposal_id, "approved" if decision == "approve" else "rejected")
+        if not resolved_ok:
+            raise HTTPException(status_code=404, detail=f"proposal {payload.proposal_id!r} is not pending")
+        return ApprovalResponse(
+            ok=True,
+            session_id=session_id,
+            proposal_id=payload.proposal_id,
+            decision=decision,
+            resolved=1,
+            pending=gate.pending,
+            detail=f"{payload.proposal_id} {decision}d",
+        )
 
     @app.get("/health", response_model=HealthResponse, summary="Ollama + model health")
     async def health(container: ContainerDep) -> HealthResponse:
