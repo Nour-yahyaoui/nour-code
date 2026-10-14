@@ -73,7 +73,7 @@ class ToolCallRecord(BaseModel):
     error: str | None = None
     duration_ms: float = 0.0
     iteration: int = 0
-    source: Literal["builtin", "skill"] = "builtin"
+    source: Literal["builtin", "skill", "unknown"] = "builtin"
     skill: str | None = None
 
 
