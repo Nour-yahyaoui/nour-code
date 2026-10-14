@@ -411,3 +411,165 @@ runaway `cat` can never blow up the context window.
 stderr, truncated}`. Non-zero exits keep the payload and report
 `ERROR: command exited with N` plus the tail of stdout/stderr, so skills that
 parse command output (`npm audit --json`) still work.
+
+## 9. Skills
+
+A skill is a single `.py` file that declares metadata plus a dispatcher. Drop it
+into a skills directory and its tools join the model's tool list.
+
+```python
+SKILL_NAME = "security_review"
+SKILL_DESCRIPTION = "..."
+SKILL_TRIGGERS = ["when user asks for a security review", "before deploy"]
+SKILL_TOOLS = [ ...list of tool schemas... ]
+
+async def handle(tool_name: str, args: dict, ctx: dict) -> dict:
+    ...
+```
+
+* **Discovery** — every `*.py` file in `NOUR_CODE_SKILLS_DIRS`
+  (default: `nour_code/skills/` then `./skills/`) except `__init__.py` and
+  anything starting with `_`.
+* **Hot reload** — `POST /skills/reload` re-imports everything; skill tools are
+  unregistered and re-registered, and clients get fresh `skill_loaded` events.
+* **Failure isolation** — a skill that raises on import, lacks `SKILL_NAME`, has
+  a non-async `handle`, or claims a tool name already taken is **logged and
+  skipped**; the server keeps serving.
+* **Context** — `ctx` carries `tools` (facade over the built-ins),
+  `permissions`, `settings`, `session_id`, `working_dir`, `logger`, `skills`,
+  `registry` and `emit`.
+* **Return values** — return any JSON-serialisable dict.
+  `{"ok": False, "error": "..."}` is surfaced to the model as `ERROR: …`;
+  add `"denied": True` for a permission refusal, which becomes `DENIED: …`.
+
+### Bundled skills
+
+**`security_skill`** (read-only)
+
+| Tool | What it does |
+|---|---|
+| `security_scan(path)` | Walks source files and flags shell injection, `eval`/`pickle`, disabled TLS verification, SQL built by concatenation, XSS sinks, weak hashes, hard-coded credentials, permissive CORS, debug flags, plaintext HTTP, secrets in logs, path traversal, disabled CSRF. |
+| `check_secrets(path)` | Detects AWS keys, GitHub/GitLab/Slack/npm/PyPI/Google/Stripe/SendGrid tokens, private key blocks, JWTs, connection strings with inline passwords, hard-coded password literals and high-entropy strings. **Evidence and snippets are redacted** so findings are safe to log. |
+| `check_dependency_cves(package_json_path)` | Runs `npm audit --json` in the project and groups advisories by severity with fixable packages and next steps. Reports `npm_unavailable` explicitly when npm/network is missing rather than pretending the project is clean. |
+
+**`production_skill`** (writes files)
+
+| Tool | What it does |
+|---|---|
+| `add_logging(file_path)` | Ensures a logger exists (`logging.getLogger(__name__)` for Python, pino/winston/structured-console for JS/TS) and every function logs its entry. |
+| `add_error_handling(file_path)` | Wraps functions that do I/O, network or parsing in `try/except` (Python) or `try/catch` (JS/TS) that logs with context and re-raises. |
+| `add_input_validation(file_path)` | Adds `isinstance`/`TypeError` checks for annotated Python parameters and null-guard clauses for JS/TS parameters. |
+| `generate_dockerfile(project_root, runtime)` | Writes a multi-stage, non-root, health-checked `Dockerfile` for Node/Next.js, Python or Rust, plus a `.dockerignore`. |
+| `generate_ci_pipeline(project_root, target)` | Writes `.github/workflows/ci.yml` (or `.gitlab-ci.yml`) with dependency caching, lint, tests against a PostgreSQL service, a build step and a container build. |
+
+All three code transformations are **idempotent** (they report
+`already_compliant` on a second run) and **safe**: the rewritten file is only
+written if it still parses (Python) or its braces still balance (JS/TS).
+
+### Writing your own
+
+```bash
+cp SKILL_TEMPLATE.py skills/my_skill.py
+$EDITOR skills/my_skill.py
+curl -s -X POST http://localhost:8000/skills/reload | jq
+curl -s http://localhost:8000/skills | jq '.skills[] | {name, tools}'
+```
+
+A minimal skill:
+
+```python
+SKILL_NAME = "line_counter"
+SKILL_DESCRIPTION = "Count the lines of code in a project, grouped by language."
+SKILL_TRIGGERS = ["when the user asks how big the codebase is"]
+SKILL_TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "count_lines",
+        "description": "Count lines per file extension under a directory.",
+        "parameters": {"type": "object",
+                       "properties": {"path": {"type": "string"}},
+                       "required": ["path"], "additionalProperties": False},
+    },
+}]
+
+async def handle(tool_name, args, ctx):
+    if tool_name != "count_lines":
+        return {"ok": False, "error": f"unknown tool {tool_name!r}"}
+    try:
+        root = ctx["permissions"].resolve_path(args["path"], must_exist=True, kind="dir")
+    except PermissionError as exc:
+        return {"ok": False, "denied": True, "error": str(exc)}
+
+    from collections import Counter
+    counts = Counter()
+    for file in root.rglob("*"):
+        if file.is_file() and "node_modules" not in file.parts:
+            try:
+                counts[file.suffix or "(no extension)"] += sum(1 for _ in file.open(errors="ignore"))
+            except OSError:
+                continue
+    return {"ok": True, "by_extension": dict(counts.most_common(20))}
+```
+
+You can also define tool schemas with Pydantic models — pass the class in
+`SKILL_TOOLS` and its JSON schema is derived automatically (name from
+`tool_name`/class name, description from `tool_description`/docstring).
+
+## 10. Production-ready mode
+
+Triggered automatically when the message matches phrases such as
+*"production ready"*, *"make it production"*, *"prepare for production"*,
+*"production-grade"*, *"ship to production"*, *"deploy ready"* or *"harden this"*.
+It can also be forced per request with `"production_ready": true`.
+
+When active:
+
+1. A `PRODUCTION-READY MODE` instruction block is injected into the system
+   prompt for that turn: structured logging, explicit error handling, input
+   validation, environment-driven configuration, `/health` + `/metrics`
+   endpoints, tests, docs — and **no placeholders**.
+2. After the model finishes, the agent automatically runs the production skill's
+   `add_logging`, `add_error_handling` and `add_input_validation` on every source
+   file the model touched (falling back to the project's top-level sources).
+   Mentioning *docker*/*image* also generates a `Dockerfile`; mentioning
+   *CI*/*pipeline*/*workflow* also generates the pipeline.
+3. The touched files are scanned for `TODO`, `FIXME`, `XXX`, `NotImplementedError`,
+   *"your code here"*, *lorem ipsum*, … If any remain, the agent asks the model to
+   fix them (up to `NOUR_CODE_PRODUCTION_MAX_REMEDIATION_ROUNDS` extra rounds).
+4. A checklist is appended to the answer, computed from the real project state:
+
+```
+### Production-readiness checklist
+- [x] Structured logging present (no print/console.log in production paths) — found in /app/service.py
+- [x] Errors handled explicitly and logged with context — found in /app/service.py
+- [ ] Input validated at every boundary — no validation found
+- [ ] Health/liveness endpoint exposed — no /health endpoint found
+- [x] No TODO / FIXME / placeholder stubs — clean
+- [ ] Dockerfile present — no Dockerfile
+- [ ] CI pipeline present — no .github/workflows found
+
+**4 item(s) still open.** Resolve them before shipping.
+```
+
+Set `NOUR_CODE_PRODUCTION_AUTO_HARDEN=false` to keep the instructions but skip
+the automatic tool invocation.
+
+## 11. Sessions
+
+* In-memory dict `session_id -> Session(messages, created_at, last_active,
+  working_dir, tool_call_count)`.
+* A background sweeper drops sessions idle for more than
+  `NOUR_CODE_SESSION_TTL_SECONDS` (2 h by default).
+* On shutdown the store is written to `nour-code-sessions.json` (atomic
+  replace) and reloaded on startup; corrupt or expired records are ignored.
+* Concurrent requests for the same session serialise on a per-session lock, so
+  history can never interleave.
+* History is trimmed to `NOUR_CODE_MAX_HISTORY_MESSAGES` (system message kept).
+
+```bash
+# start a session and reuse it
+SID=$(curl -s -X POST http://localhost:8000/chat/sync -H 'Content-Type: application/json' \
+  -d '{"message":"remember: the entrypoint is main.py"}' | jq -r .session_id)
+curl -s -X POST http://localhost:8000/chat/sync -H 'Content-Type: application/json' \
+  -d "{\"message\":\"what is the entrypoint?\",\"session_id\":\"$SID\"}" | jq -r .content
+```
