@@ -83,6 +83,31 @@ PRODUCTION_FILE_ARGS = ("path", "file_path", "target", "source")
 FILE_MUTATING_TOOLS = frozenset({"write_file", "apply_patch", "delete_file"})
 
 
+#: Command candidates per project marker, in priority order.
+VERIFY_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("pyproject.toml", "pytest -q"),
+    ("pytest.ini", "pytest -q"),
+    ("setup.py", "pytest -q"),
+    ("requirements.txt", "pytest -q"),
+    ("package.json", "npm test --if-present"),
+    ("Cargo.toml", "cargo test"),
+    ("go.mod", "go test ./..."),
+    ("Makefile", "make test"),
+)
+
+
+def detect_verify_command(root: Path) -> str | None:
+    """Pick the project's test command from its manifest files (best effort)."""
+    for marker, command in VERIFY_COMMANDS:
+        if (root / marker).is_file():
+            if marker == "package.json":
+                text = (root / marker).read_text(encoding="utf-8", errors="replace")
+                if '"test"' not in text:
+                    continue
+            return command
+    return None
+
+
 def _first_path(arguments: dict[str, Any] | None) -> str | None:
     """Best-effort target path of a filesystem tool call."""
     if not isinstance(arguments, dict):
@@ -104,6 +129,7 @@ class TurnState:
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     thinking_parts: list[str] = field(default_factory=list)
     approval_mode: str = "off"
+    verifications: list[dict[str, Any]] = field(default_factory=list)
     approvals_requested: int = 0
     approvals_rejected: list[str] = field(default_factory=list)
     touched_files: list[str] = field(default_factory=list)
@@ -371,6 +397,44 @@ class Agent:
                                 },
                             )
                         )
+
+    # -- verification -------------------------------------------------------
+    async def _verify(
+        self,
+        session: Session,
+        state: TurnState,
+        ctx: ToolContext,
+        emit: Callable[[StreamEvent], Awaitable[None]],
+    ) -> None:
+        """Run the project's own checks and report the result."""
+        command = detect_verify_command(session.working_dir)
+        if not command:
+            state.warnings.append("verification: no test command detected for this project")
+            return
+
+        result = await self.registry.call(
+            "run_shell",
+            {"command": command, "timeout_seconds": self.settings.verify_timeout_seconds},
+            ctx,
+            iteration=state.iterations,
+        )
+        if result.status == "denied":
+            state.warnings.append(f"verification: `{command}` was denied: {result.error}")
+            return
+
+        output = result.output if isinstance(result.output, dict) else {}
+        payload = {
+            "command": command,
+            "exit_code": output.get("exit_code", -1),
+            "stdout": (output.get("stdout") or "")[: self.settings.max_tool_output_chars],
+            "stderr": (output.get("stderr") or "")[: self.settings.max_tool_output_chars],
+            "status": result.status,
+            "output": (output.get("stdout") or output.get("stderr") or "")[:4000],
+        }
+        state.verifications.append(payload)
+        if payload["exit_code"] != 0:
+            state.warnings.append(f"verification failed: `{command}` exited with {payload['exit_code']}")
+        await emit(StreamEvent(type="verification", data=payload))
 
     # -- approvals ----------------------------------------------------------
     def _needs_approval(self, tool: str, state: TurnState) -> bool:
@@ -919,6 +983,15 @@ class Agent:
                     + ", ".join(row["item"] for row in failed)
                 )
 
+        if verify or (verify is None and self.settings.verify_default):
+            try:
+                await self._verify(session, state, ctx, emit)
+                async for event in self._drain(queue):
+                    yield event
+            except Exception as exc:  # noqa: BLE001 - verification must never break a turn
+                self.logger.warning("verification failed: %s", exc)
+                state.warnings.append(f"verification error: {exc}")
+
         self.approvals.discard(session.session_id)
         session.trim(self.settings.max_history_messages)
         response = ChatResponse(
@@ -932,6 +1005,7 @@ class Agent:
             warnings=state.warnings,
             production_ready=production,
             production_checklist=checklist,
+            verifications=state.verifications,
             usage=ModelUsage(
                 prompt_tokens=state.usage.prompt_tokens,
                 completion_tokens=state.usage.completion_tokens,
@@ -970,6 +1044,7 @@ class Agent:
         enable_thinking: bool | None = None,
         tools: list[str] | None = None,
         system_extra: str | None = None,
+        verify: bool | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream the turn as SSE events (tokens arrive as the model emits them)."""
         async for event in self._turn(
@@ -986,6 +1061,7 @@ class Agent:
             enable_thinking=enable_thinking,
             tools=tools,
             system_extra=system_extra,
+            verify=verify,
         ):
             yield event
 
@@ -1004,6 +1080,7 @@ class Agent:
         enable_thinking: bool | None = None,
         tools: list[str] | None = None,
         system_extra: str | None = None,
+        verify: bool | None = None,
     ) -> ChatResponse:
         """Run the turn to completion and return the whole response."""
         fallback = ChatResponse(session_id=session.session_id, content="", finished=False, finish_reason="error")
@@ -1021,6 +1098,7 @@ class Agent:
             enable_thinking=enable_thinking,
             tools=tools,
             system_extra=system_extra,
+            verify=verify,
         ):
             if event.type == "done":
                 return ChatResponse.model_validate(event.data["response"])

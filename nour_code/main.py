@@ -349,6 +349,7 @@ async def _sse_stream(container: Container, session: Session, payload: ChatReque
                 enable_thinking=payload.enable_thinking,
                 tools=payload.tools,
                 system_extra=payload.system_extra,
+                verify=payload.verify,
             ):
                 await queue.put(event.to_sse())
         except asyncio.CancelledError:
@@ -422,6 +423,7 @@ def _register_routes(app: FastAPI) -> None:
                     enable_thinking=payload.enable_thinking,
                     tools=payload.tools,
                     system_extra=payload.system_extra,
+                    verify=payload.verify,
                 )
             finally:
                 with contextlib.suppress(Exception):

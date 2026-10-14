@@ -136,3 +136,50 @@ def test_invalid_approval_mode_is_rejected(client, bad: str) -> None:
     test_client, _, _ = client
     response = test_client.post("/chat/sync", json={"message": "hi", "approval": bad})
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# verification pass
+# ---------------------------------------------------------------------------
+def test_verify_command_detection() -> None:
+    from nour_code.agent import detect_verify_command
+
+    assert detect_verify_command(Path("/does/not/matter")) is None
+
+
+def test_verify_command_prefers_python(tmp_path: Path) -> None:
+    from nour_code.agent import detect_verify_command
+
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    assert detect_verify_command(tmp_path) == "pytest -q"
+
+
+def test_verify_command_skips_package_json_without_a_test_script(tmp_path: Path) -> None:
+    from nour_code.agent import detect_verify_command
+
+    (tmp_path / "package.json").write_text('{"name": "web"}')
+    assert detect_verify_command(tmp_path) is None
+
+
+async def test_verification_runs_the_project_checks(container, sandbox: Path) -> None:
+    fake = container.agent.client
+    fake.script.clear()
+    fake.add_text("all good")
+    (sandbox / "pytest.ini").write_text("[pytest]\n")
+
+    events = await collect(container, "hi", verify=True)
+    verifications = [e for e in events if e.type == "verification"]
+    assert verifications, "no verification event was emitted"
+    assert verifications[0].data["command"] == "pytest -q"
+    assert "exit_code" in verifications[0].data
+
+    done = next(e for e in events if e.type == "done")
+    assert done.data["response"]["verifications"]
+
+
+def test_verify_default_setting_is_off_by_default(client) -> None:
+    test_client, container, _ = client
+    assert container.settings.verify_default is False
+    body = test_client.post("/chat/sync", json={"message": "hi"}).json()
+    assert body["verifications"] == []

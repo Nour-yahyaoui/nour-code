@@ -127,6 +127,9 @@ class ChatResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     production_ready: bool = False
     production_checklist: list[dict[str, Any]] = Field(default_factory=list)
+    verifications: list[dict[str, Any]] = Field(
+        default_factory=list, description="Results of the project checks run after the turn."
+    )
     usage: ModelUsage = Field(default_factory=ModelUsage)
     duration_ms: float = 0.0
 
