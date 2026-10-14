@@ -92,6 +92,7 @@ class SkillsManager:
         self._tool_owner: dict[str, str] = {}
         self._last_errors: list[SkillError] = []
         self._lock = asyncio.Lock()
+        self.version: int = 0  # bumped on every (re)load so clients can detect changes
         registry.set_skill_dispatcher(self.dispatch)
 
     # -- discovery ---------------------------------------------------------
@@ -174,6 +175,7 @@ class SkillsManager:
             )
 
         self._last_errors = errors
+        self.version += 1
         return ReloadSkillsResponse(
             ok=not errors,
             loaded=loaded,
