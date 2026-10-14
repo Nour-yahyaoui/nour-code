@@ -264,6 +264,12 @@
         <button id="send">stream (SSE)</button>
         <button id="sync" class="ghost">sync</button>
         <button id="stop" class="ghost danger" disabled>stop</button>
+        <label class="inline" title="Ask before anything is written, patched, deleted or executed">
+          <input type="checkbox" id="approve" checked /> approve changes
+        </label>
+        <label class="inline" title="Ask the model to reason before answering">
+          <input type="checkbox" id="think" checked /> thinking
+        </label>
         <label class="inline"><input type="checkbox" id="prod" /> production-ready mode</label>
         <span class="spacer"></span>
         <span class="hint">Ctrl/⌘ + Enter to send · Esc to stop</span>
@@ -1025,6 +1031,8 @@ async function streamMessage() {
         message,
         session_id: state.sessionId || null,
         production_ready: $('prod').checked ? true : null,
+        approval: $('approve').checked ? 'mutating' : 'off',
+        enable_thinking: $('think').checked ? true : null,
       }),
       signal: state.controller.signal,
     });
@@ -1104,6 +1112,7 @@ async function syncMessage() {
         message,
         session_id: state.sessionId || null,
         production_ready: $('prod').checked ? true : null,
+        enable_thinking: $('think').checked ? true : null,
       }),
     });
     if (!response.ok) {
