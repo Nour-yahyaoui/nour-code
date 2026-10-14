@@ -975,3 +975,166 @@ async def _add_error_handling(ctx: dict[str, Any], file_path: str, dry_run: bool
     if _language(path) == "python":
         return await _add_error_handling_python(ctx, path, source, dry_run)
     return await _add_error_handling_js(ctx, path, source, dry_run)
+
+
+# ---------------------------------------------------------------------------
+# add_input_validation
+# ---------------------------------------------------------------------------
+def _py_function_args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[str, ast.AST | None]]:
+    """Return ``(name, annotation)`` pairs, dropping ``self``/``cls``."""
+    pairs: list[tuple[str, ast.AST | None]] = []
+    positional = list(getattr(node.args, "posonlyargs", []) or []) + list(node.args.args)
+    defaults_offset = len(positional) - len(node.args.defaults)
+    for index, arg in enumerate(positional):
+        if index == 0 and arg.arg in {"self", "cls"}:
+            continue
+        if index >= defaults_offset:
+            continue  # has a default: optional by contract
+        pairs.append((arg.arg, arg.annotation))
+    for arg, default in zip(node.args.kwonlyargs, node.args.defaults):
+        if arg.arg in node.args.kw_defaults and False:  # pragma: no cover - defensive
+            continue
+        _ = default
+        if arg.arg not in {name for name, _ in pairs}:
+            pairs.append((arg.arg, arg.annotation))
+    return pairs
+
+
+def _py_has_raise(node: ast.AST) -> bool:
+    return any(isinstance(child, ast.Raise) for child in ast.walk(node))
+
+
+async def _add_input_validation_python(ctx: dict[str, Any], path: Path, source: str, dry_run: bool) -> dict[str, Any]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return {"ok": False, "error": f"cannot parse {path.name}: {exc.msg} (line {exc.lineno})"}
+
+    lines = source.splitlines()
+    edits: list[tuple[int, int, list[str]]] = []
+    validated: dict[str, list[str]] = {}
+
+    for node in _py_functions(tree):
+        if _py_has_raise(node):
+            continue
+        statements = _py_body_statements(node)
+        if not statements:
+            continue
+        first = statements[0]
+        if first.lineno == node.lineno:
+            continue
+        pairs = _py_function_args(node)
+        if not pairs:
+            continue
+        indent = _indent_of(lines[first.lineno - 1])
+        block: list[str] = []
+        for name, annotation in pairs:
+            declared = _py_annotation_name(annotation)
+            if declared:
+                block.append(f"{indent}if not isinstance({name}, {declared}):")
+                block.append(
+                    f'{indent}    raise TypeError(f"{name} must be {declared}, '
+                    f'got {{type({name}).__name__}}")'
+                )
+            else:
+                block.append(f"{indent}if {name} is None:")
+                block.append(f'{indent}    raise ValueError("{name} must not be None")')
+        if block:
+            edits.append((first.lineno - 1, 0, block))
+            validated[node.name] = [name for name, _ in pairs]
+
+    if not edits:
+        return {
+            "ok": True,
+            "tool": "add_input_validation",
+            "file": str(path),
+            "language": "python",
+            "written": False,
+            "already_compliant": True,
+            "changes": {"validated": {}},
+            "note": "functions already validate their arguments (or take none)",
+        }
+
+    new_source = _join_lines(apply_edits(lines, edits), source)
+    try:
+        ast.parse(new_source)
+    except SyntaxError as exc:
+        return {"ok": False, "error": f"refusing to write invalid Python: {exc.msg} (line {exc.lineno})"}
+
+    outcome = await _write_source(ctx, path, new_source, dry_run=dry_run)
+    return {
+        "ok": True,
+        "tool": "add_input_validation",
+        "file": str(path),
+        "language": "python",
+        "dry_run": dry_run,
+        "changes": {"validated": validated},
+        "diff": _diff_summary(source, new_source),
+        "write": outcome,
+    }
+
+
+async def _add_input_validation_js(ctx: dict[str, Any], path: Path, source: str, dry_run: bool) -> dict[str, Any]:
+    lines = source.splitlines()
+    insertions: list[tuple[int, list[str]]] = []
+    validated: dict[str, list[str]] = {}
+
+    for function in find_js_functions(source):
+        if not function["params"]:
+            continue
+        body = source[function["body_start"] : function["body_end"]]
+        body_lines = [line for line in body.splitlines() if line.strip()]
+        if not body_lines:
+            continue
+        indent = _indent_of(body_lines[0])
+        block: list[str] = []
+        guarded: list[str] = []
+        for name in function["params"]:
+            if re.search(rf"\b{re.escape(name)}\s*===?\s*(?:undefined|null)|throw new TypeError", body):
+                continue
+            block.append(
+                f"{indent}if ({name} === undefined || {name} === null) "
+                f'throw new TypeError("{name} is required");'
+            )
+            guarded.append(name)
+        if block:
+            insertions.append((function["body_line_start"], block))
+            validated[function["name"]] = guarded
+
+    if not insertions:
+        return {
+            "ok": True,
+            "tool": "add_input_validation",
+            "file": str(path),
+            "language": _language(path),
+            "written": False,
+            "already_compliant": True,
+            "changes": {"validated": {}},
+            "note": "functions already guard their arguments (or take none)",
+        }
+
+    new_source = _join_lines(insert_lines(lines, insertions), source)
+    if not _js_balanced(new_source):
+        return {"ok": False, "error": "refusing to write JS/TS with unbalanced braces"}
+
+    outcome = await _write_source(ctx, path, new_source, dry_run=dry_run)
+    return {
+        "ok": True,
+        "tool": "add_input_validation",
+        "file": str(path),
+        "language": _language(path),
+        "dry_run": dry_run,
+        "changes": {"validated": validated},
+        "diff": _diff_summary(source, new_source),
+        "write": outcome,
+    }
+
+
+async def _add_input_validation(ctx: dict[str, Any], file_path: str, dry_run: bool = False) -> dict[str, Any]:
+    result = await _read_source(ctx, file_path, allowed=SUPPORTED_SUFFIXES)
+    if isinstance(result, dict):
+        return result
+    path, source = result
+    if _language(path) == "python":
+        return await _add_input_validation_python(ctx, path, source, dry_run)
+    return await _add_input_validation_js(ctx, path, source, dry_run)
