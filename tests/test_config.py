@@ -6,8 +6,6 @@ import os
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from nour_code.config import (
     ENV_PREFIX,
     PROJECT_ROOT,
@@ -17,6 +15,7 @@ from nour_code.config import (
     _split_str,
     load_settings,
 )
+from pydantic import ValidationError
 
 
 # ---------------------------------------------------------------------------
