@@ -87,6 +87,15 @@ approve everything it wants to change, and see the files it produced.
 
 ### Fixed
 
+* **CI is green again.** The workflow ran the bare `pytest` console script, so
+  the repository root was not on `sys.path` and collection died with
+  `ModuleNotFoundError: No module named 'nour_code'` (pytest exit code 4) on
+  Python 3.11/3.12/3.13. The repo root is now importable from `pytest.ini`
+  (`pythonpath = .`, mirrored in `pyproject.toml`) and CI calls
+  `python -m pytest`, matching `make test`.
+* Docs: the `/health` example reports the real version (`1.2.0`) and the test
+  count is up to date; `.env.example` now lists the 1.2.0 agent controls
+  (turn budgets, loop detection, approvals, verification, plan mode).
 * JS/TS body insertion is now precise (statements used to land above the
   function when the body started on the next line) and the injected Python
   logger keeps PEP 8 spacing.

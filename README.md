@@ -158,7 +158,8 @@ curl -s http://localhost:8000/health | jq
 {
   "status": "ok",
   "app": "nour-code",
-  "version": "1.0.0",
+  "version": "1.2.0",
+  "uptime_seconds": 12.4,
   "ollama_reachable": true,
   "ollama_url": "http://localhost:11434",
   "model": "qwen3:8b",
@@ -773,7 +774,7 @@ offline work.
 ```bash
 pip install -r requirements-dev.txt
 
-pytest                       # 320 tests
+pytest                       # 325 tests
 pytest -k security           # one area
 pytest --tb=short -q         # terse failures
 
@@ -815,7 +816,7 @@ nour-code/
 │   └── version_check.py     # Python 3.11 guard
 ├── static/
 │   └── console.html         # browser console (resizable panes + live events)
-├── tests/                   # 320 tests, no network required
+├── tests/                   # 325 tests, no network required
 ├── permissions.yaml
 ├── requirements.txt         # pinned versions
 ├── requirements-dev.txt
