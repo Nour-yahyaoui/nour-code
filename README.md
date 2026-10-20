@@ -263,7 +263,7 @@ file in the working directory is read automatically (see `.env.example`).
 | `NOUR_CODE_APPROVAL_TIMEOUT_SECONDS` | `300` | How long a proposal waits for a human |
 | `NOUR_CODE_VERIFY_DEFAULT` | `false` | Run the project checks after every turn |
 | `NOUR_CODE_VERIFY_TIMEOUT_SECONDS` | `180` | Timeout for that command |
-| `NOUR_CODE_PLAN_MODE` | `auto` | Reserved for plan mode (1.3.0) |
+| `NOUR_CODE_PLAN_MODE` | `auto` | Reserved for plan mode (validated, no effect yet) |
 | `NOUR_CODE_MAX_CONCURRENT_TURNS` | `4` | Parallel agent turns allowed |
 | `NOUR_CODE_TOP_P` | – | Nucleus sampling, forwarded to Ollama |
 | `NOUR_CODE_TOP_K` | – | Top-k sampling |
