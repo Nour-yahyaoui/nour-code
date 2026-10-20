@@ -283,6 +283,10 @@ def test_console_page_has_the_full_client() -> None:
         'id="themeBtn"',         # light / dark
         'id="sprite"',           # every glyph is an inline SVG symbol
         'id="approve"',          # approvals toggle
+        'id="collapseWs"',       # collapsible workspace sidebar
+        'id="wsBtn"',            # …which becomes a drawer on narrow screens
+        'id="hideEvents"',       # collapsible event stream
+        "nour.ui.wsCollapsed",   # sidebar state survives a reload
         "fetch('/files/content",  # read-only file reads
         "fetch('/chat'",
         "getReader()",

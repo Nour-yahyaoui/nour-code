@@ -220,20 +220,25 @@ curl -s http://localhost:8000/health | jq
 
 ### Landing page
 
-`landing/` is a React 19 + TypeScript + Vite page for the project. It reads the
-live `/health` endpoint through a dev proxy, so it can show whether the model is
-pulled, resident or unreachable:
+`landing/` is a React 19 + TypeScript + Vite page for the project, published at
+<https://nour-code-agent.vercel.app/>. It is **fully static**: no API calls, no
+proxy configuration, nothing to set up. Visitors get a written tour and a
+labelled recreation of the console — it deliberately does not probe a local
+instance, because almost nobody reading it is running one.
 
 ```bash
 cd landing
 npm install
-npm run dev            # http://localhost:5173, proxies /health and /ollama to :8000
+npm run dev            # http://localhost:5173 — static, no backend needed
+npm run build          # writes landing/dist
 ```
 
-Set `NOUR_CODE_API` if the agent is not on `127.0.0.1:8000`; `npm run build`
-writes a static bundle to `landing/dist`. See `landing/README.md` for the
-mapping between the UX patterns and the components, and for the bundled mock
-Ollama daemon used when developing the status panel.
+The icon set lives in `landing/public/` and is rendered by
+`landing/scripts/make-icon.py` (Pillow, no SVG rasteriser required):
+
+```bash
+python landing/scripts/make-icon.py   # icon-512.png, favicon.ico, apple-touch-icon.png, …
+```
 
 ## 4. Configuration
 

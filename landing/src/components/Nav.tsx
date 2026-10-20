@@ -1,4 +1,5 @@
 const LINKS = [
+  { href: "#console", label: "Console" },
   { href: "#features", label: "Features" },
   { href: "#architecture", label: "Architecture" },
   { href: "#start", label: "Quick start" },
@@ -12,10 +13,7 @@ export function Nav() {
     <header className="nav">
       <div className="container nav__inner">
         <a className="brand" href="#top" aria-label="nour-code, back to top">
-          <svg className="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
-            <rect width="32" height="32" rx="8" fill="currentColor" opacity="0.12" />
-            <path d="M9 23V9h3.3l6.4 9V9H22v14h-3.3l-6.4-9v9H9Z" fill="currentColor" />
-          </svg>
+          <img className="brand__mark" src="/icon.svg" alt="" width={28} height={28} />
           <span className="brand__word">
             nour<span className="brand__dim">-code</span>
           </span>
@@ -30,8 +28,14 @@ export function Nav() {
         </nav>
 
         <div className="nav__actions">
-          <a className="nav__version" href="#status" title="Live status of the local instance">
-            v1.2
+          <a
+            className="nav__version"
+            href="https://github.com/Nour-yahyaoui/nour-code/releases/latest"
+            target="_blank"
+            rel="noreferrer noopener"
+            title="Latest release"
+          >
+            v1.3
           </a>
           <a
             className="btn btn--ghost btn--sm"

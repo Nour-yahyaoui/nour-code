@@ -1,5 +1,6 @@
 import { ApiExplorer } from "./components/ApiExplorer";
 import { Architecture } from "./components/Architecture";
+import { ConsolePreview } from "./components/ConsolePreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Faq } from "./components/Faq";
 import { Features } from "./components/Features";
@@ -8,8 +9,8 @@ import { Hero } from "./components/Hero";
 import { Nav } from "./components/Nav";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { Security } from "./components/Security";
-import { StatusPanel } from "./components/StatusPanel";
 import { Steps } from "./components/Steps";
+import { Reveal } from "./components/Reveal";
 
 export default function App() {
   return (
@@ -26,11 +27,27 @@ export default function App() {
           <Hero />
         </ErrorBoundary>
 
-        <div className="container status-wrap" id="status">
-          <ErrorBoundary label="Live status">
-            <StatusPanel />
-          </ErrorBoundary>
-        </div>
+        <section className="section section--console" id="console" aria-labelledby="console-title">
+          <div className="container">
+            <div className="section__head">
+              <p className="eyebrow">what you actually see</p>
+              <h2 id="console-title" className="section__title">
+                A transcript, tool cards, and your files
+              </h2>
+              <p className="section__lede">
+                Tokens stream in as the model writes them. Every tool call becomes a card you can
+                open — arguments, status, duration, full output. The workspace on the right is a
+                read-only view of the files it just touched. Both sidebars collapse.
+              </p>
+            </div>
+
+            <ErrorBoundary label="Console preview">
+              <Reveal>
+                <ConsolePreview />
+              </Reveal>
+            </ErrorBoundary>
+          </div>
+        </section>
 
         <ErrorBoundary label="Features">
           <Features />
@@ -68,11 +85,11 @@ export default function App() {
             <div className="cta__actions">
               <a
                 className="btn btn--primary"
-                href="https://github.com/Nour-yahyaoui/nour-code"
+                href="https://github.com/Nour-yahyaoui/nour-code/releases/latest"
                 target="_blank"
                 rel="noreferrer noopener"
               >
-                Get nour-code
+                Download the release
               </a>
               <a className="btn btn--quiet" href="#start">
                 See the three commands

@@ -3,51 +3,42 @@
 All notable changes to **nour-code** are documented here. The project follows
 semantic versioning: `MAJOR.MINOR.PATCH`.
 
-## [Unreleased] — cold starts are visible, stopping actually stops
+## [Unreleased]
+
+## [1.3.0] — 2026-10-20 · cold starts are visible, the page is for everyone
+
+The release where the console stopped looking frozen, stop started stopping,
+and the website stopped pretending to be a local dashboard.
 
 ### Added
 
 * **`status`/`waiting` heartbeats.** While the model has not produced a token
-  (a cold turn loads ~6 GB of qwen3:8b first), `POST /chat` now emits a
-  `status` event every `NOUR_CODE_WAIT_HEARTBEAT_SECONDS` (5 s) carrying
-  `waited_ms` and `awaiting_first_token`. Before this, the stream was silent
-  for the whole load and the UI looked frozen.
+  (a cold turn loads ~6 GB of qwen3:8b first), `POST /chat` emits a `status`
+  event every `NOUR_CODE_WAIT_HEARTBEAT_SECONDS` (5 s) carrying `waited_ms` and
+  `awaiting_first_token`. Before this, the stream was silent for the whole load
+  and the UI looked frozen.
 * **`NOUR_CODE_FIRST_TOKEN_TIMEOUT_SECONDS`** (default 300). If the first token
   never arrives, the turn ends with an actionable `error` event ("the model is
   most likely still loading — preload it with `POST /ollama/warmup`") instead
   of hanging until the 600 s request timeout.
 * The console shows the wait with a live timer and, after ~8 s, the hint
   *loading the model into memory — the first call can take a minute*.
+* **Collapsible console.** The workspace sidebar collapses to a 46 px rail
+  (`Ctrl/⌘+B` or the button in its header), and the raw-event drawer gained a
+  drag handle, a close button, and `Ctrl/⌘+J`. Widths and states persist under
+  `nour.ui.wsWidth`, `nour.ui.wsCollapsed`, and `nour.ui.drawerHeight`.
+* **On phones the sidebar is a drawer, not a disappearance.** Below 850 px the
+  workspace used to be hidden entirely; it now slides in from the right behind
+  a topbar button with a scrim, so files and the read-only viewer work at any
+  width.
+* **A real icon.** The "N" mark ships as `icon.svg`, 512/64 px PNGs, a
+  multi-resolution `.ico`, and an `apple-touch-icon`; both the landing page and
+  the console use it.
+* **A public landing page.** https://nour-code-agent.vercel.app/ is a fully
+  static site with a labelled recreation of the console.
 
-### Fixed
+### Added — model residency
 
-* **Stopping a turn now stops the model.** Cancelling a stream (Esc, tab
-  closed, client disconnect) left the model/tool task running to completion
-  because it lived in its own `task`; `_pump()` now cancels it when the
-  consumer goes away. A cold generation could previously keep a CPU busy for
-  minutes after the user had already hit stop.
-
-## [Unreleased] — terminal chat, landing page
-
-### Added
-
-* **Terminal chat** — `python -m nour_code --chat`, `python -m nour_code.agent`
-  or `python agent.py` from a checkout. Streams tokens, prints tool calls with
-  their results, supports `/tools`, `/reset`, `/exit`; `--think` shows the
-  model's reasoning and `--usage` the token counts. Running `agent.py` directly
-  used to die with `ImportError: attempted relative import with no known parent
-  package` ([#3](https://github.com/Nour-yahyaoui/nour-code/issues/3)); the
-  module now re-runs itself inside the package instead of failing.
-* **Landing page** in `landing/` — React 19 + TypeScript + Vite, no external
-  requests. Live status panel fed by `GET /health` (pulled vs resident), a
-  model warm-up button wired to `POST /ollama/warmup`, filterable endpoint
-  reference, and the state handling from the UX skill: timeout + abort + stale
-  guard, double-submit guard, slow indicator, delayed spinner, debounced filter,
-  offline banner, per-section error boundaries, skeletons with the real height.
-
-## [Unreleased] — model residency visibility
-
-### Added
 
 * **`python -m nour_code --doctor`** — a one-shot self-check: Python version,
   installed dependencies, whether the API port is free (or already served by
@@ -69,10 +60,43 @@ semantic versioning: `MAJOR.MINOR.PATCH`.
 * The console status chip now distinguishes *resident*, *idle*
   (pulled but unloaded), *not pulled* and *offline*.
 
-## [1.2.0] — agent upgrades
+### Changed
+
+* **The landing page no longer probes your machine.** The `#status` section,
+  `StatusPanel`, and its `/health` + `/ollama/*` fetches were removed. A
+  visitor used to land on a dashboard that could only ever tell them "not
+  running"; now they see what the agent looks like.
+* The landing `vite.config.ts` no longer carries a proxy or an API target —
+  there is nothing to proxy to.
+
+### Fixed
+
+* **Stopping a turn now stops the model.** Cancelling a stream (Esc, tab
+  closed, client disconnect) left the model/tool task running to completion
+  because it lived in its own `task`; `_pump()` now cancels it when the
+  consumer goes away. A cold generation could previously keep a CPU busy for
+  minutes after the user had already hit stop.
+
+## [1.2.0] — 2026-10-19 · control, visibility, terminal chat, landing page
 
 The theme of 1.2.0 is *control and visibility*: you can watch the model reason,
 approve everything it wants to change, and see the files it produced.
+
+### Added — terminal chat & landing page
+
+* **Terminal chat** — `python -m nour_code --chat`, `python -m nour_code.agent`
+  or `python agent.py` from a checkout. Streams tokens, prints tool calls with
+  their results, supports `/tools`, `/reset`, `/exit`; `--think` shows the
+  model's reasoning and `--usage` the token counts. Running `agent.py` directly
+  used to die with `ImportError: attempted relative import with no known parent
+  package` ([#3](https://github.com/Nour-yahyaoui/nour-code/issues/3)); the
+  module now re-runs itself inside the package instead of failing.
+* **Landing page** in `landing/` — React 19 + TypeScript + Vite, no external
+  requests. Live status panel fed by `GET /health` (pulled vs resident), a
+  model warm-up button wired to `POST /ollama/warmup`, filterable endpoint
+  reference, and the state handling from the UX skill: timeout + abort + stale
+  guard, double-submit guard, slow indicator, delayed spinner, debounced filter,
+  offline banner, per-section error boundaries, skeletons with the real height.
 
 ### Added — real-time chat & reasoning
 

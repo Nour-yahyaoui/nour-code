@@ -101,6 +101,10 @@ export type FaqItem = { q: string; a: string };
 
 export const FAQ: FaqItem[] = [
   {
+    q: "Is this website the app?",
+    a: "No — this page is a static site with no backend and no tracking. nour-code itself runs on your own machine: you download it, point it at Ollama, and open the console at localhost. Nothing you do here is sent anywhere.",
+  },
+  {
     q: "Why is `ollama ps` empty while I can chat in the terminal?",
     a: "Those are two different questions. `ollama list` (and GET /api/tags) says the model is pulled; `ollama ps` (and GET /api/ps) says it is in memory right now. Ollama loads on demand and unloads after keep_alive — five minutes by default. GET /health now reports both, as model_loaded and model_running, and POST /ollama/warmup preloads the model.",
   },
