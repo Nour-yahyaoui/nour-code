@@ -4,6 +4,7 @@ Examples::
 
     python -m nour_code                       # serve on 0.0.0.0:8000
     python -m nour_code --port 9000 --model qwen3:8b
+    python -m nour_code --chat                # talk to the agent in this terminal
     python -m nour_code --doctor              # diagnose Python, port, Ollama and the model
     python -m nour_code --print-config
 """
@@ -44,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="check Python, dependencies, the API port and Ollama, then exit",
     )
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        help="talk to the agent in this terminal instead of starting the server",
+    )
     return parser
 
 
@@ -76,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         from .doctor import run_doctor
 
         return run_doctor(settings)
+
+    if args.chat:
+        from .chat import main as chat_main
+
+        return chat_main()
 
     import uvicorn
 
