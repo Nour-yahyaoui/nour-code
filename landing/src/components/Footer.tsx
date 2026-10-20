@@ -20,13 +20,20 @@ export function Footer() {
             <a href="https://github.com/Nour-yahyaoui/nour-code#readme" target="_blank" rel="noreferrer noopener">
               README
             </a>
+            <a
+              href="https://github.com/Nour-yahyaoui/nour-code/releases"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              Releases
+            </a>
             <a href="https://github.com/Nour-yahyaoui/nour-code/issues" target="_blank" rel="noreferrer noopener">
               Issues
             </a>
           </div>
           <div>
             <h3>on this page</h3>
-            <a href="#status">Live status</a>
+            <a href="#console">Console</a>
             <a href="#start">Quick start</a>
             <a href="#api">API</a>
           </div>

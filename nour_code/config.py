@@ -19,7 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 APP_NAME = "nour-code"
 ENV_PREFIX = "NOUR_CODE_"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 #: Repository root (the directory that contains ``nour_code/``).
@@ -95,6 +95,20 @@ class Settings(BaseSettings):
     )
     max_model_retries: int = Field(default=2, ge=0, le=5)
     retry_backoff_seconds: float = Field(default=1.0, ge=0.0)
+    # --- 1.2.1: makes a cold model load visible instead of looking frozen ---
+    wait_heartbeat_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description="While the model has not produced a token yet, emit a `waiting` status this often.",
+    )
+    first_token_timeout_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "Give up when the first token takes longer than this, with a message that says "
+            "the model is probably still loading (a cold qwen3:8b load can take minutes on CPU)."
+        ),
+    )
 
     # ---- agent loop -----------------------------------------------------
     max_iterations: int = Field(default=15, ge=1, le=100)

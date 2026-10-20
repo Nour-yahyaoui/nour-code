@@ -220,20 +220,25 @@ curl -s http://localhost:8000/health | jq
 
 ### Landing page
 
-`landing/` is a React 19 + TypeScript + Vite page for the project. It reads the
-live `/health` endpoint through a dev proxy, so it can show whether the model is
-pulled, resident or unreachable:
+`landing/` is a React 19 + TypeScript + Vite page for the project, published at
+<https://nour-code-agent.vercel.app/>. It is **fully static**: no API calls, no
+proxy configuration, nothing to set up. Visitors get a written tour and a
+labelled recreation of the console — it deliberately does not probe a local
+instance, because almost nobody reading it is running one.
 
 ```bash
 cd landing
 npm install
-npm run dev            # http://localhost:5173, proxies /health and /ollama to :8000
+npm run dev            # http://localhost:5173 — static, no backend needed
+npm run build          # writes landing/dist
 ```
 
-Set `NOUR_CODE_API` if the agent is not on `127.0.0.1:8000`; `npm run build`
-writes a static bundle to `landing/dist`. See `landing/README.md` for the
-mapping between the UX patterns and the components, and for the bundled mock
-Ollama daemon used when developing the status panel.
+The icon set lives in `landing/public/` and is rendered by
+`landing/scripts/make-icon.py` (Pillow, no SVG rasteriser required):
+
+```bash
+python landing/scripts/make-icon.py   # icon-512.png, favicon.ico, apple-touch-icon.png, …
+```
 
 ## 4. Configuration
 
@@ -248,6 +253,8 @@ file in the working directory is read automatically (see `.env.example`).
 | `NOUR_CODE_TEMPERATURE` | `0.1` | Low temperature = deterministic code |
 | `NOUR_CODE_NUM_CTX` | `16384` | Context window passed to Ollama |
 | `NOUR_CODE_KEEP_ALIVE` | unset (Ollama: `5m`) | `keep_alive` used by `/ollama/warmup`: `30m`, `-1` (never unload), `0` |
+| `NOUR_CODE_WAIT_HEARTBEAT_SECONDS` | `5` | How often a `status`/`waiting` heartbeat is sent while the model has produced no token |
+| `NOUR_CODE_FIRST_TOKEN_TIMEOUT_SECONDS` | `300` | Give up with an actionable error when the first token takes longer than this (cold model load) |
 | `NOUR_CODE_NUM_PREDICT` | unset | Cap on generated tokens |
 | `NOUR_CODE_MAX_TURN_SECONDS` | `900` | Wall-clock budget for one turn (`time_budget`) |
 | `NOUR_CODE_MAX_TURN_TOKENS` | `0` | Token budget for one turn, `0` = unlimited (`token_budget`) |
@@ -540,14 +547,22 @@ Errors are always JSON: `{"error": "...", "code": "...", "detail": "..."}` with
 | `tool_result` | `{id, tool, status, result, error, duration_ms, iteration, skill, rejected?}` | After it finishes |
 | `tool_proposal` | `{id, tool, arguments, iteration, skill, risk, timeout_seconds}` | A mutating call is waiting for your approval |
 | `skill_loaded` | `{name, description, triggers, tools, source, version}` | On the first turn of a session, and after a reload |
+| `status` | `{phase, iteration, ...}` | `model_call` before the request, `waiting` every `NOUR_CODE_WAIT_HEARTBEAT_SECONDS` while the model is silent, `model_streaming` at the first chunk |
 | `usage` | `{iteration, prompt_tokens, completion_tokens, total_tokens, elapsed_ms}` | After every model call |
 | `verification` | `{command, exit_code, stdout, stderr, status, output}` | Result of the project checks (`verify: true`) |
 | `file_change` | `{tool, path, action, iteration, call_id}` | A file was created, modified or deleted |
 | `error` | `{message, code, fatal}` | Model/agent failure; the stream still ends with `done` |
 | `done` | `{response: {...ChatResponse...}}` | Always last |
 
-`status` is `ok`, `error` or `denied`. Keep-alive comments (`: keepalive`) are
-sent every 15 s so proxies do not drop long tool calls.
+`tool_result.status` is `ok`, `error` or `denied`. Keep-alive comments
+(`: keepalive`) are sent every 15 s so proxies do not drop long tool calls.
+
+A cold turn spends its first seconds loading the weights (qwen3:8b is ~6 GB),
+during which the model produces no tokens. The `status`/`waiting` heartbeat is
+what tells a UI that nothing is broken: it carries `waited_ms` and
+`awaiting_first_token`. If the first token never arrives within
+`NOUR_CODE_FIRST_TOKEN_TIMEOUT_SECONDS` the turn ends with an `error` event
+that names the fix, instead of hanging until the request timeout.
 
 ```bash
 curl -N -X POST http://localhost:8000/chat -H 'Content-Type: application/json' \
@@ -934,6 +949,7 @@ automatically) or point `NOUR_CODE_SKILLS_DIRS` somewhere else.
 
 | Symptom | Cause / fix |
 |---|---|
+| First answer takes minutes, or the console sits at *STREAMING* with no text | A cold turn has to load the model: qwen3:8b is ~6 GB and Ollama emits nothing until it is in memory (100% CPU makes this slower). `status`/`waiting` heartbeats arrive every 5 s, and `POST /ollama/warmup?keep_alive=-1` avoids the wait on later turns. If nothing at all arrives, the client and server builds are mismatched — check `GET /health` has the fields your UI renders |
 | `curl -s localhost:8000/health` prints **nothing** | The server is not listening. Start it (`python -m nour_code --port 8000`, or `start.cmd` on Windows) and leave that terminal open; then re-run the curl. `python -m nour_code --doctor` says whether the port is free, taken by nour-code, or taken by something else |
 | `curl` works but the browser shows nothing | Check the port in the URL and any firewall/AV prompt; `--host 0.0.0.0` is only needed for other machines |
 | `health` shows `"ollama_reachable": false` | Start Ollama (`ollama serve`) or fix `NOUR_CODE_OLLAMA_BASE_URL` |
