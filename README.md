@@ -218,6 +218,23 @@ curl -s http://localhost:8000/health | jq
 }
 ```
 
+### Landing page
+
+`landing/` is a React 19 + TypeScript + Vite page for the project. It reads the
+live `/health` endpoint through a dev proxy, so it can show whether the model is
+pulled, resident or unreachable:
+
+```bash
+cd landing
+npm install
+npm run dev            # http://localhost:5173, proxies /health and /ollama to :8000
+```
+
+Set `NOUR_CODE_API` if the agent is not on `127.0.0.1:8000`; `npm run build`
+writes a static bundle to `landing/dist`. See `landing/README.md` for the
+mapping between the UX patterns and the components, and for the bundled mock
+Ollama daemon used when developing the status panel.
+
 ## 4. Configuration
 
 Every setting is an environment variable prefixed with `NOUR_CODE_`. A `.env`
@@ -903,6 +920,7 @@ nour-code/
 ├── requirements-dev.txt
 ├── pyproject.toml
 ├── start.cmd                # Windows: create venv, install, doctor, serve
+├── landing/                 # React + TypeScript landing page (Vite)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── SKILL_TEMPLATE.py

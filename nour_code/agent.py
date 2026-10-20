@@ -13,9 +13,29 @@ matches a production trigger, an instruction block is injected into the system
 prompt for that turn, the production skill's tools are invoked automatically on
 the files the model touched, placeholders are scanned for (and retried), and a
 checklist is appended to the final answer.
+
+Running the file directly starts the terminal chat::
+
+    python agent.py                 # from inside nour_code/
+    python -m nour_code.agent       # from the repository root
+    python -m nour_code --chat      # same client, via the main CLI
 """
 
 from __future__ import annotations
+
+if __name__ == "__main__" and not __package__:
+    # ``python agent.py`` (or ``python nour_code/agent.py``) from a checkout:
+    # this module belongs to a package, so running the file directly leaves
+    # ``__package__`` empty and every ``from .x import y`` fails.  Re-run it as
+    # part of the package, which is exactly what ``python -m nour_code.agent``
+    # does, and let the terminal chat take over below.
+    import runpy
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    runpy.run_module("nour_code.agent", run_name="__main__", alter_sys=True)
+    raise SystemExit(0)
 
 import asyncio
 import contextlib
@@ -1229,3 +1249,9 @@ class Agent:
                 fallback.content = ""
         fallback.finish_reason = "error"
         return fallback
+
+
+if __name__ == "__main__":  # pragma: no cover - thin wrapper around chat.main
+    from .chat import main as chat_main
+
+    raise SystemExit(chat_main())
