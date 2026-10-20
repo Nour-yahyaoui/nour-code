@@ -3,6 +3,30 @@
 All notable changes to **nour-code** are documented here. The project follows
 semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [Unreleased] — model residency visibility
+
+### Added
+
+* **`python -m nour_code --doctor`** — a one-shot self-check: Python version,
+  installed dependencies, whether the API port is free (or already served by
+  nour-code), Ollama reachability, whether the model is pulled, whether it is
+  **resident**, and whether the context Ollama allocated matches
+  `NOUR_CODE_NUM_CTX`. Exits non-zero on failure, so it works in scripts.
+* **`start.cmd`** — Windows launcher: creates `.venv`, installs the pinned
+  requirements, runs the doctor and serves on `:8000`; `start.cmd --doctor`
+  runs only the checks. A blank `curl` on Windows now has an explanation.
+* **`model_running`** and **`model_expires_at`** in `GET /health`
+  (`running_models` lists every resident model). `model_loaded` already meant
+  *pulled*; the new field answers *in memory right now* via Ollama's
+  `GET /api/ps`, so an idle model no longer looks like a missing one.
+* **`POST /ollama/warmup`** — preload the model (and optionally keep it
+  resident with `keep_alive=30m` / `-1`) through the native `/api/generate`
+  endpoint, which honours `keep_alive`; `/v1/chat/completions` ignores it.
+* **`POST /ollama/unload`** — free the memory immediately (`keep_alive: 0`).
+* **`NOUR_CODE_KEEP_ALIVE`** — default `keep_alive` for warm-ups.
+* The console status chip now distinguishes *resident*, *idle*
+  (pulled but unloaded), *not pulled* and *offline*.
+
 ## [1.2.0] — agent upgrades
 
 The theme of 1.2.0 is *control and visibility*: you can watch the model reason,

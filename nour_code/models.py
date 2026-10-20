@@ -394,10 +394,27 @@ class HealthResponse(BaseModel):
     ollama_version: str | None = None
     model: str = ""
     model_loaded: bool = False
+    model_running: bool = False
+    model_expires_at: str | None = None
     available_models: list[str] = Field(default_factory=list)
+    running_models: list[str] = Field(default_factory=list)
     skills_loaded: int = 0
     active_sessions: int = 0
     tools: int = 0
+    detail: str | None = None
+
+
+class ModelMemoryResponse(BaseModel):
+    """Result of ``POST /ollama/warmup`` and ``POST /ollama/unload``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool = True
+    action: Literal["warmup", "unload"] = "warmup"
+    model: str = ""
+    keep_alive: str | None = None
+    running: bool = False
+    expires_at: str | None = None
     detail: str | None = None
 
 

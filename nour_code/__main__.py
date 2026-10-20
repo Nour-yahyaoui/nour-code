@@ -4,6 +4,7 @@ Examples::
 
     python -m nour_code                       # serve on 0.0.0.0:8000
     python -m nour_code --port 9000 --model qwen3:8b
+    python -m nour_code --doctor              # diagnose Python, port, Ollama and the model
     python -m nour_code --print-config
 """
 
@@ -38,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print the resolved configuration as JSON and exit",
     )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="check Python, dependencies, the API port and Ollama, then exit",
+    )
     return parser
 
 
@@ -65,6 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_config:
         print(json.dumps(settings.describe(), indent=2, sort_keys=True))
         return 0
+
+    if args.doctor:
+        from .doctor import run_doctor
+
+        return run_doctor(settings)
 
     import uvicorn
 

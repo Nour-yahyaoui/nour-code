@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_api_key: str = "ollama"  # Ollama ignores it, the SDK requires it
     model: str = "qwen3:8b"
+    keep_alive: str | None = Field(
+        default=None,
+        description=(
+            "Ollama keep_alive used by /ollama/warmup ('30m', '-1', '0'); "
+            "unset = Ollama's own default (5 minutes)."
+        ),
+    )
     request_timeout_seconds: float = Field(default=600.0, gt=0)
     connect_timeout_seconds: float = Field(default=10.0, gt=0)
     health_timeout_seconds: float = Field(default=5.0, gt=0)
@@ -226,6 +233,16 @@ class Settings(BaseSettings):
         return f"{self.ollama_base_url.rstrip('/')}/api/tags"
 
     @property
+    def native_ps_url(self) -> str:
+        """Native ``/api/ps``: the models Ollama currently holds in memory."""
+        return f"{self.ollama_base_url.rstrip('/')}/api/ps"
+
+    @property
+    def native_generate_url(self) -> str:
+        """Native ``/api/generate``: used to preload/unload a model (not to chat)."""
+        return f"{self.ollama_base_url.rstrip('/')}/api/generate"
+
+    @property
     def ollama_version_url(self) -> str:
         return f"{self.ollama_base_url.rstrip('/')}/api/version"
 
@@ -271,6 +288,7 @@ class Settings(BaseSettings):
             "version": self.version,
             "environment": self.environment,
             "model": self.model,
+            "keep_alive": self.keep_alive,
             "ollama_base_url": self.ollama_base_url,
             "num_ctx": self.num_ctx,
             "temperature": self.temperature,
