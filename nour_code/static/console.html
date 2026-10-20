@@ -216,6 +216,7 @@
   .wait { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
   .wait .spin { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .wait .hint { color: var(--warn); font-size: 12px; }
 
   .line { font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
   .line.err { color: var(--err); }
@@ -561,7 +562,10 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
       $('transcript').insertBefore(mine, wrap);
     }
 
-    state.turn = { wrap, cards, text, thinking: null, waiting: null, empty: true, stopped: false };
+    state.turn = {
+      wrap, cards, text, thinking: null, waiting: null,
+      empty: true, stopped: false, waitHint: false, waitLabel: null,
+    };
     return state.turn;
   }
 
@@ -724,6 +728,16 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
           }
           updateStats();
         }, 100);
+      }
+    } else if (data.phase === 'waiting' && turn.waiting) {
+      // The server sends this every few seconds while the model is silent -
+      // usually because a cold turn is still loading ~6 GB of weights.
+      const seconds = Math.round((data.waited_ms || 0) / 1000);
+      if (seconds >= 8 && !turn.waitHint) {
+        turn.waitHint = true;
+        turn.waiting.appendChild(
+          el('span', 'hint', 'loading the model into memory - the first call can take a minute'),
+        );
       }
     } else if (data.phase === 'model_streaming' && turn.waiting) {
       turn.waiting.remove();

@@ -61,7 +61,15 @@ from .models import (
     ToolCallRecord,
     new_id,
 )
-from .ollama_client import ChatResult, ModelOptions, OllamaClient, OllamaError, Usage
+from .ollama_client import (
+    ChatResult,
+    ModelOptions,
+    OllamaClient,
+    OllamaError,
+    OllamaUnavailableError,
+    StreamChunk,
+    Usage,
+)
 from .permissions import PermissionDeniedError, PermissionManager
 from .prompts import (
     PLACEHOLDER_REGEX,
@@ -516,13 +524,21 @@ class Agent:
         proposal is parked waiting for a human: whatever the task emits is
         forwarded to the client immediately.
         """
-        while not task.done():
+        try:
+            while not task.done():
+                while not queue.empty():
+                    yield queue.get_nowait()
+                with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+                    await asyncio.wait({task}, timeout=0.05)
             while not queue.empty():
                 yield queue.get_nowait()
-            with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
-                await asyncio.wait({task}, timeout=0.05)
-        while not queue.empty():
-            yield queue.get_nowait()
+        finally:
+            # The consumer can leave early: the client pressed stop, the browser
+            # tab closed, or an error frame ended the turn. Nothing would read
+            # the results any more, so the model/tool call must not keep running
+            # (a cold qwen3 generation can burn a whole minute after "stop").
+            if not task.done():
+                task.cancel()
 
     async def _emit_skill_events(self, session: Session, emit: Callable[[StreamEvent], Awaitable[None]]) -> None:
         """Announce loaded skills once per (re)load so clients can display them."""
@@ -547,6 +563,86 @@ class Agent:
                 "outcome": outcome,
             },
         )
+
+    async def _stream_with_heartbeat(
+        self,
+        chunks: AsyncIterator[StreamChunk],
+        emit: Callable[[StreamEvent], Awaitable[None]],
+        *,
+        iteration: int,
+    ) -> AsyncIterator[StreamChunk]:
+        """Forward chunks, and say so when the model is silent.
+
+        A cold turn has to load the weights first: qwen3:8b is ~6 GB, and
+        Ollama emits nothing until loading finishes. Without this, the event
+        stream looks dead for minutes and the UI looks frozen. Two things
+        happen here:
+
+        * every ``wait_heartbeat_seconds`` the client gets a ``status`` event
+          with ``phase: "waiting"`` and the elapsed time, so any UI can show
+          "still loading — 42s";
+        * if the *first* token has not arrived after
+          ``first_token_timeout_seconds``, the turn fails with an error that
+          names the fix instead of hanging until the request timeout.
+
+        The model iterator runs in its own task on purpose: cancelling
+        ``__anext__()`` directly would abort the underlying HTTP response.
+        """
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        started = time.perf_counter()
+        first_chunk = True
+
+        async def pump() -> None:
+            try:
+                async for chunk in chunks:
+                    queue.put_nowait(("chunk", chunk))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - re-raised in the consumer
+                queue.put_nowait(("error", exc))
+            finally:
+                queue.put_nowait(("end", None))
+
+        task = asyncio.ensure_future(pump())
+        interval = max(0.05, self.settings.wait_heartbeat_seconds)
+        timeout = self.settings.first_token_timeout_seconds
+        try:
+            while True:
+                try:
+                    kind, payload = await asyncio.wait_for(queue.get(), timeout=interval)
+                except TimeoutError:
+                    waited = time.perf_counter() - started
+                    if first_chunk and timeout and waited >= timeout:
+                        raise OllamaUnavailableError(
+                            f"no token after {waited:.0f}s - the model is most likely still "
+                            f"loading. Preload it with `POST /ollama/warmup`, check `ollama ps`, "
+                            f"or raise NOUR_CODE_FIRST_TOKEN_TIMEOUT_SECONDS "
+                            f"(now {timeout:.0f}s)."
+                        ) from None
+                    await emit(
+                        StreamEvent(
+                            type="status",
+                            data={
+                                "phase": "waiting",
+                                "iteration": iteration,
+                                "waited_ms": round(waited * 1000, 1),
+                                "awaiting_first_token": first_chunk,
+                            },
+                        )
+                    )
+                    continue
+                if kind == "chunk":
+                    first_chunk = False
+                    yield payload
+                elif kind == "error":
+                    raise payload
+                else:
+                    return
+        finally:
+            if not task.done():
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
     async def _stream_iteration(
         self,
@@ -577,7 +673,9 @@ class Agent:
                 },
             )
         )
-        async for chunk in self.client.stream_chat(messages, schemas, options=options):
+        async for chunk in self._stream_with_heartbeat(
+            self.client.stream_chat(messages, schemas, options=options), emit, iteration=iteration
+        ):
             if first_chunk:
                 first_chunk = False
                 await emit(

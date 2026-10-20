@@ -3,6 +3,30 @@
 All notable changes to **nour-code** are documented here. The project follows
 semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [Unreleased] — cold starts are visible, stopping actually stops
+
+### Added
+
+* **`status`/`waiting` heartbeats.** While the model has not produced a token
+  (a cold turn loads ~6 GB of qwen3:8b first), `POST /chat` now emits a
+  `status` event every `NOUR_CODE_WAIT_HEARTBEAT_SECONDS` (5 s) carrying
+  `waited_ms` and `awaiting_first_token`. Before this, the stream was silent
+  for the whole load and the UI looked frozen.
+* **`NOUR_CODE_FIRST_TOKEN_TIMEOUT_SECONDS`** (default 300). If the first token
+  never arrives, the turn ends with an actionable `error` event ("the model is
+  most likely still loading — preload it with `POST /ollama/warmup`") instead
+  of hanging until the 600 s request timeout.
+* The console shows the wait with a live timer and, after ~8 s, the hint
+  *loading the model into memory — the first call can take a minute*.
+
+### Fixed
+
+* **Stopping a turn now stops the model.** Cancelling a stream (Esc, tab
+  closed, client disconnect) left the model/tool task running to completion
+  because it lived in its own `task`; `_pump()` now cancels it when the
+  consumer goes away. A cold generation could previously keep a CPU busy for
+  minutes after the user had already hit stop.
+
 ## [Unreleased] — terminal chat, landing page
 
 ### Added
