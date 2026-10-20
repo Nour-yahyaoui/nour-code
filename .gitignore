@@ -31,3 +31,8 @@ skills/__pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# landing page (Vite)
+node_modules/
+landing/dist/
+landing/.smoke/

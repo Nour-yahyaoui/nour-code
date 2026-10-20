@@ -3,6 +3,24 @@
 All notable changes to **nour-code** are documented here. The project follows
 semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [Unreleased] — terminal chat, landing page
+
+### Added
+
+* **Terminal chat** — `python -m nour_code --chat`, `python -m nour_code.agent`
+  or `python agent.py` from a checkout. Streams tokens, prints tool calls with
+  their results, supports `/tools`, `/reset`, `/exit`; `--think` shows the
+  model's reasoning and `--usage` the token counts. Running `agent.py` directly
+  used to die with `ImportError: attempted relative import with no known parent
+  package` ([#3](https://github.com/Nour-yahyaoui/nour-code/issues/3)); the
+  module now re-runs itself inside the package instead of failing.
+* **Landing page** in `landing/` — React 19 + TypeScript + Vite, no external
+  requests. Live status panel fed by `GET /health` (pulled vs resident), a
+  model warm-up button wired to `POST /ollama/warmup`, filterable endpoint
+  reference, and the state handling from the UX skill: timeout + abort + stale
+  guard, double-submit guard, slow indicator, delayed spinner, debounced filter,
+  offline banner, per-section error boundaries, skeletons with the real height.
+
 ## [Unreleased] — model residency visibility
 
 ### Added
