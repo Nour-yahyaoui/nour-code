@@ -35,9 +35,10 @@ export default function App() {
                 A transcript, tool cards, and your files
               </h2>
               <p className="section__lede">
-                Tokens stream in as the model writes them. Every tool call becomes a card you can
-                open — arguments, status, duration, full output. The workspace on the right is a
-                read-only view of the files it just touched. Both sidebars collapse.
+                Tokens stream in as the model writes them, reasoning included, with a live status
+                chip that says what is happening — thinking, loading the model, streaming, waiting
+                for you. Every tool call becomes a card you can open. Approvals count down and
+                expire honestly. Both sidebars collapse.
               </p>
             </div>
 

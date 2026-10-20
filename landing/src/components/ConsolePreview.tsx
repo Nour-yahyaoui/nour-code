@@ -24,6 +24,10 @@ export function ConsolePreview() {
         </span>
         <span className="preview__url">localhost:8000</span>
         <span className="preview__tag">console</span>
+        <span className="preview__phase">
+          <i aria-hidden="true" />
+          waiting for approval
+        </span>
       </div>
 
       <div className="preview__body">
@@ -33,7 +37,15 @@ export function ConsolePreview() {
 
           <p className="preview__who">nour-code</p>
           <details className="preview__think" open>
-            <summary>thinking · 214 tokens</summary>
+            <summary>
+              <span>thinking</span>
+              <span className="preview__pulse" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+              <span className="preview__think-meta">1.4 s · 214 tokens</span>
+            </summary>
             <p>
               main.py exposes /chat with no limiter. A token bucket per session is the smallest
               change that still behaves. I should read the route, patch it, then run the tests.
@@ -41,15 +53,24 @@ export function ConsolePreview() {
           </details>
 
           <div className="preview__card">
-            <span className="preview__card-name">apply_patch</span>
-            <span className="preview__card-args">nour_code/main.py · +34 −2</span>
-            <span className="preview__card-state">ok 9.7 ms</span>
+            <span className="preview__card-name">read_file</span>
+            <span className="preview__card-args">nour_code/main.py</span>
+            <span className="preview__card-state">ok 12 ms</span>
           </div>
 
-          <p className="preview__answer">
-            Added a token bucket to <code>/chat</code>: 30 requests per minute per session, returning
-            <code>429</code> with <code>Retry-After</code>. Two tool calls, 1.9 s.
-          </p>
+          <div className="preview__gate">
+            <div className="preview__gate-row">
+              <span className="preview__gate-tool">apply_patch</span>
+              <span className="preview__gate-risk">low risk</span>
+              <span className="preview__gate-clock">4:52</span>
+            </div>
+            <div className="preview__gate-args">nour_code/main.py · +34 −2</div>
+            <div className="preview__gate-actions" aria-hidden="true">
+              <span className="is-primary">approve</span>
+              <span>reject</span>
+              <span>approve all</span>
+            </div>
+          </div>
 
           <div className="preview__composer" aria-hidden="true">
             <span>Ask nour-code to build, fix or explain something…</span>
@@ -77,17 +98,17 @@ export function ConsolePreview() {
             <p className="preview__viewer-head">main.py · read-only</p>
             <pre>{`@app.post("/chat")
 async def chat(payload: ChatRequest):
-    limit = buckets.hit(session.id)
-    if not limit.allowed:
-        raise HTTPException(429, headers={
-            "Retry-After": str(limit.retry_after)})`}</pre>
+    session = await resolve(payload)
+    return StreamingResponse(
+        stream(session, payload.message),
+        media_type="text/event-stream")`}</pre>
           </div>
         </aside>
       </div>
 
       <figcaption className="preview__foot">
-        Recreated in HTML from the real console — not a screenshot. Both sidebars collapse;
-        the event stream and the files pane are optional.
+        Recreated in HTML from the real console — not a screenshot. Status and reasoning update
+        live, approvals count down, and both sidebars collapse.
       </figcaption>
     </figure>
   );

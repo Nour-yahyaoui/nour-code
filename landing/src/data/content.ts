@@ -27,7 +27,7 @@ export const FEATURES: Feature[] = [
   {
     id: "approvals",
     title: "A human in the loop when it matters",
-    body: "Ask for approval: \"mutating\" and every write, patch, delete or shell call parks until you approve or reject it over the API — with a risk label and a timeout.",
+    body: "Ask for approval: \"mutating\" and every write, patch, delete or shell call parks until you decide — with a risk label and a visible countdown. An expired proposal ends the turn instead of parking it for the afternoon.",
     meta: "POST /sessions/{id}/approve",
   },
   {
@@ -103,6 +103,10 @@ export const FAQ: FaqItem[] = [
   {
     q: "Is this website the app?",
     a: "No — this page is a static site with no backend and no tracking. nour-code itself runs on your own machine: you download it, point it at Ollama, and open the console at localhost. Nothing you do here is sent anywhere.",
+  },
+  {
+    q: "My turn ended with `approval_timeout` — is that a crash?",
+    a: "No, that is the approval gate doing its job. Nobody answered the proposal within NOUR_CODE_APPROVAL_TIMEOUT_SECONDS (300 s), so nothing ran and the turn stopped. It used to return a `DENIED:` result and let the model try again — one unanswered card could park a request for an hour. The console counts down on every proposal: approve, reject, or untick “approve” to let mutating calls run.",
   },
   {
     q: "Why is `ollama ps` empty while I can chat in the terminal?",

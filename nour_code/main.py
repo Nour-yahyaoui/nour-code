@@ -337,6 +337,33 @@ async def _resolve_session(container: Container, payload: ChatRequest) -> Sessio
 
 
 async def _sse_stream(container: Container, session: Session, payload: ChatRequest) -> AsyncIterator[str]:
+    """Own the session lock, and say so while waiting behind another turn.
+
+    The lock serialises turns of one session. Without a frame before the
+    ``async with``, a second message would produce no bytes at all — the UI
+    would look dead for as long as the other turn (up to a 300 s approval plus a
+    15 min budget) kept running.
+    """
+    lock = container.store.lock(session.session_id)
+    if lock.locked():
+        yield StreamEvent(
+            type="status",
+            data={
+                "phase": "queued",
+                "session_id": session.session_id,
+                "message": "another turn is still running in this session",
+            },
+        ).to_sse()
+    async with lock:
+        yield StreamEvent(
+            type="status",
+            data={"phase": "turn_started", "session_id": session.session_id},
+        ).to_sse()
+        async for frame in _sse_body(container, session, payload):
+            yield frame
+
+
+async def _sse_body(container: Container, session: Session, payload: ChatRequest) -> AsyncIterator[str]:
     """Run the agent and yield SSE frames, with keep-alives during long tool calls."""
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -399,9 +426,8 @@ def _register_routes(app: FastAPI) -> None:
     async def chat(payload: ChatRequest, container: ContainerDep) -> StreamingResponse:
         session = await _resolve_session(container, payload)
         # The session lock is held for the whole stream (released on disconnect).
-        generator = _with_lock(_sse_stream(container, session, payload), container.store.lock(session.session_id))
         return StreamingResponse(
-            generator,
+            _sse_stream(container, session, payload),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache, no-transform",
@@ -664,13 +690,6 @@ def _register_routes(app: FastAPI) -> None:
                 media_type="text/plain",
             )
         return Response(content=body, media_type=content_type)
-
-
-async def _with_lock(generator: AsyncIterator[str], lock: asyncio.Lock) -> AsyncIterator[str]:
-    """Keep a session lock held until the stream is consumed or cancelled."""
-    async with lock:
-        async for frame in generator:
-            yield frame
 
 
 # ---------------------------------------------------------------------------

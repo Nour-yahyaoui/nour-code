@@ -163,6 +163,8 @@ class TurnState:
     recent_signatures: list[str] = field(default_factory=list)
     approvals_requested: int = 0
     approvals_rejected: list[str] = field(default_factory=list)
+    #: set when a proposal expired with no human decision - the turn ends there
+    approval_timed_out: bool = False
     touched_files: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     iterations: int = 0
@@ -296,11 +298,13 @@ class Agent:
                     )
                 )
 
+            proposal_id: str | None = None
             if self._needs_approval(name, state):
                 state.approvals_requested += 1
                 decision = await self._request_approval(
                     session, state, tool=name, arguments=arguments or {}, iteration=iteration, skill=self.skills.owner_of(name), emit=emit
                 )
+                proposal_id = getattr(decision, "proposal_id", None)
                 if decision != "approved":
                     reason = {
                         "rejected": "the user rejected this action",
@@ -341,10 +345,33 @@ class Agent:
                                     "iteration": iteration,
                                     "skill": record.skill,
                                     "rejected": True,
+                                    "timed_out": decision == "timeout",
+                                    "proposal_id": proposal_id,
                                 },
                             )
                         )
                     session.add(ChatMessage.tool_result(call_id, name, rendered))
+
+                    if decision == "timeout":
+                        # Continuing after a five-minute silence is what made a
+                        # single "write a file" request look hung for an hour:
+                        # the model retries, each retry parks for another five
+                        # minutes. Stop the turn and say why.
+                        state.approval_timed_out = True
+                        message = (
+                            f"approval timed out after {self.approvals.timeout_seconds:.0f}s - "
+                            f"`{name}` did not run. The turn ended; send the request again "
+                            "when you are back, or untick 'approve' in the console."
+                        )
+                        state.warnings.append(message)
+                        if emit is not None:
+                            await emit(
+                                StreamEvent(
+                                    type="warning",
+                                    data={"code": "approval_timeout", "message": message},
+                                )
+                            )
+                        break
 
                     continue
 
@@ -400,6 +427,7 @@ class Agent:
                             "duration_ms": round(result.duration_ms, 2),
                             "iteration": iteration,
                             "skill": record.skill,
+                            "proposal_id": proposal_id,
                         },
                     )
                 )
@@ -1135,6 +1163,10 @@ class Agent:
                         await tool_task
                         async for event in self._drain(queue):
                             yield event
+                        if state.approval_timed_out:
+                            finish_reason = "approval_timeout"
+                            finished = False
+                            break
                         if self._repeated_call(state, calls):
                             budget_exhausted = (
                                 f"stopped: `{calls[0].function.name}` was called "

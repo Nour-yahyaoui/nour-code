@@ -30,6 +30,32 @@ logger = logging.getLogger("nour_code.approvals")
 
 Decision = Literal["approved", "rejected", "timeout", "cancelled"]
 
+
+class ApprovalDecision(str):
+    """A decision string that remembers which proposal produced it.
+
+    It compares (and hashes) exactly like the plain string, so callers can keep
+    writing ``if decision == "approved"``, while the turn can echo the
+    ``proposal_id`` back to the UI in its ``tool_result`` — without it the
+    console has to guess which card a result belongs to, and guesses wrong when
+    the model proposes the same tool twice.
+    """
+
+    proposal_id: str | None
+    auto: bool
+
+    def __new__(
+        cls, value: str, *, proposal_id: str | None = None, auto: bool = False
+    ) -> ApprovalDecision:
+        instance = super().__new__(cls, value)
+        instance.proposal_id = proposal_id
+        instance.auto = auto
+        return instance
+
+    @property
+    def timed_out(self) -> bool:
+        return str(self) == "timeout"
+
 #: Tools that change the machine. Everything else is considered read-only.
 MUTATING_TOOLS: frozenset[str] = frozenset({"write_file", "apply_patch", "delete_file", "run_shell"})
 
@@ -119,9 +145,8 @@ class ApprovalGate:
         """Emit a proposal and wait for a decision (or the timeout)."""
         emitter = emit or self._emit
         if self.auto_approve:
-            decision: Decision = "approved"
-            self.history.append({"tool": tool, "decision": decision, "auto": True})
-            return decision
+            self.history.append({"tool": tool, "decision": "approved", "auto": True})
+            return ApprovalDecision("approved", auto=True)
 
         proposal = Proposal(
             id=new_id("prop_"),
@@ -163,7 +188,7 @@ class ApprovalGate:
         logger.info(
             "proposal %s (%s) -> %s", proposal.id, tool, decision, extra={"session_id": self.session_id}
         )
-        return decision
+        return ApprovalDecision(decision, proposal_id=proposal.id)
 
     # -- resolution --------------------------------------------------------
     def resolve(self, proposal_id: str, decision: str) -> bool:

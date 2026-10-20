@@ -19,7 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 APP_NAME = "nour-code"
 ENV_PREFIX = "NOUR_CODE_"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 #: Repository root (the directory that contains ``nour_code/``).

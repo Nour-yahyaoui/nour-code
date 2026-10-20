@@ -544,17 +544,19 @@ Errors are always JSON: `{"error": "...", "code": "...", "detail": "..."}` with
 | `thinking` | `{text, iteration}` | The model's reasoning (Qwen3 thinking mode), streamed as it is produced |
 | `token` | `{text, iteration}` | Every chunk the model produces, forwarded immediately |
 | `tool_call` | `{id, tool, arguments, iteration, skill}` | Before a tool runs |
-| `tool_result` | `{id, tool, status, result, error, duration_ms, iteration, skill, rejected?}` | After it finishes |
+| `tool_result` | `{id, tool, status, result, error, duration_ms, iteration, skill, rejected?, timed_out?, proposal_id?}` | After it finishes (or after its approval expires) |
 | `tool_proposal` | `{id, tool, arguments, iteration, skill, risk, timeout_seconds}` | A mutating call is waiting for your approval |
 | `skill_loaded` | `{name, description, triggers, tools, source, version}` | On the first turn of a session, and after a reload |
-| `status` | `{phase, iteration, ...}` | `model_call` before the request, `waiting` every `NOUR_CODE_WAIT_HEARTBEAT_SECONDS` while the model is silent, `model_streaming` at the first chunk |
+| `status` | `{phase, iteration, ...}` | `queued` while another turn holds the session lock, `turn_started` once it is free, `model_call` before the request, `waiting` every `NOUR_CODE_WAIT_HEARTBEAT_SECONDS` while the model is silent, `model_streaming` at the first chunk |
 | `usage` | `{iteration, prompt_tokens, completion_tokens, total_tokens, elapsed_ms}` | After every model call |
 | `verification` | `{command, exit_code, stdout, stderr, status, output}` | Result of the project checks (`verify: true`) |
 | `file_change` | `{tool, path, action, iteration, call_id}` | A file was created, modified or deleted |
 | `error` | `{message, code, fatal}` | Model/agent failure; the stream still ends with `done` |
 | `done` | `{response: {...ChatResponse...}}` | Always last |
 
-`tool_result.status` is `ok`, `error` or `denied`. Keep-alive comments
+`tool_result.status` is `ok`, `error` or `denied`. A `denied` result caused by
+an expired approval also carries `timed_out: true` and the `proposal_id` it
+answers, so a UI can attach the outcome to the exact card. Keep-alive comments
 (`: keepalive`) are sent every 15 s so proxies do not drop long tool calls.
 
 A cold turn spends its first seconds loading the weights (qwen3:8b is ~6 GB),
@@ -588,10 +590,16 @@ Ask for a plan you can veto. Send `"approval": "mutating"` (or `"all"`) with
 
 1. emit a `tool_proposal` event instead of running the call,
 2. show an **approve / reject / approve all** card in the console,
-3. wait up to `NOUR_CODE_APPROVAL_TIMEOUT_SECONDS` for
+3. wait up to `NOUR_CODE_APPROVAL_TIMEOUT_SECONDS` (300) for
    `POST /sessions/{id}/approve`,
 4. run it on approval — or turn the rejection into a `DENIED:` tool result so the
    model proposes a different approach.
+
+A **timeout ends the turn** with `finish_reason="approval_timeout"` and a warning
+that names the tool. It used to emit `DENIED` and let the model try again, which
+turned one unanswered card into an hour of five-minute parking slots. The console
+shows a countdown on every proposal, disables the card when it expires, and
+reports a 404 from the approve endpoint instead of pretending the click worked.
 
 Mutating means: `write_file`, `apply_patch`, `delete_file`, `run_shell` and any
 skill tool that rewrites files (`security_skill`'s scanners are explicitly
