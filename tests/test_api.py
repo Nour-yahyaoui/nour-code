@@ -286,7 +286,10 @@ def test_console_page_has_the_full_client() -> None:
         'id="collapseWs"',       # collapsible workspace sidebar
         'id="wsBtn"',            # …which becomes a drawer on narrow screens
         'id="hideEvents"',       # collapsible event stream
+        'id="phase"',            # live status chip (thinking / loading / approval)
         "nour.ui.wsCollapsed",   # sidebar state survives a reload
+        "timed out — nothing ran",  # an expired approval says what happened
+        "startWatchdog",         # a silent stream is detected, not endured
         "fetch('/files/content",  # read-only file reads
         "fetch('/chat'",
         "getReader()",
@@ -421,3 +424,18 @@ def test_files_content_is_read_only(client, sandbox: Path) -> None:
     test_client.get("/files/content", params={"path": "untouched.txt"})
     assert target.read_text() == "original"
     assert target.stat().st_mtime <= target.stat().st_mtime
+
+
+async def test_a_second_turn_announces_that_it_is_queued(container) -> None:
+    """While the session lock is held the client must get a frame, not silence."""
+    from nour_code.main import _sse_stream
+    from nour_code.models import ChatRequest
+
+    session = await container.store.get_or_create()
+    lock = container.store.lock(session.session_id)
+    async with lock:
+        stream = _sse_stream(container, session, ChatRequest(message="hello"))
+        first = await stream.__anext__()
+        await stream.aclose()
+    assert "event: status" in first
+    assert "queued" in first

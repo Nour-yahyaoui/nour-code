@@ -35,7 +35,7 @@ export function Nav() {
             rel="noreferrer noopener"
             title="Latest release"
           >
-            v1.3
+            v1.4
           </a>
           <a
             className="btn btn--ghost btn--sm"

@@ -91,6 +91,36 @@
   .conn .dot.down { background: var(--err); }
   .conn .model { color: var(--text); font-family: var(--mono); font-size: 12px; }
   .conn .sess { font-family: var(--mono); font-size: 11.5px; opacity: .8; }
+  .conn .phase {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    font-size: 11px; letter-spacing: .02em; color: var(--muted);
+    padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px;
+    max-width: 210px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .conn .phase::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%; flex: none;
+    background: currentColor; opacity: .45;
+  }
+  .conn .phase.busy { color: var(--accent); }
+  .conn .phase.think { color: var(--accent-2); }
+  .conn .phase.wait { color: var(--warn); }
+  .conn .phase.err { color: var(--err); }
+  .conn .phase.busy::before,
+  .conn .phase.think::before,
+  .conn .phase.wait::before { animation: pulse-dot 1.1s ease-in-out infinite; }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: .28; transform: scale(.75); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+
+  .dots { display: inline-flex; gap: 3px; align-items: center; }
+  .dots i {
+    width: 4px; height: 4px; border-radius: 50%; background: currentColor;
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+  .dots i:nth-child(2) { animation-delay: .16s; }
+  .dots i:nth-child(3) { animation-delay: .32s; }
 
   .spacer { flex: 1; }
 
@@ -196,6 +226,17 @@
   }
   details.think[open] > summary::before { transform: rotate(90deg); }
   .think-body { color: var(--muted); font-size: 12.5px; white-space: pre-wrap; margin-top: 6px; }
+  details.think.is-live { border-left-color: var(--accent-2); }
+  details.think.is-live > summary { color: var(--text); }
+  details.think > summary .meta {
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    opacity: .85; margin-left: 2px;
+  }
+  details.think.is-live .think-body::after {
+    content: '▍'; margin-left: 1px; color: var(--accent-2);
+    animation: caret 1s steps(2, start) infinite;
+  }
+  @keyframes caret { 50% { opacity: 0; } }
 
   /* tool cards */
   details.card {
@@ -231,12 +272,28 @@
   .p-body { border-top: 1px solid var(--border); padding: 9px 11px; }
   .p-actions { display: flex; gap: 7px; padding: 9px 11px; border-top: 1px solid var(--border); flex-wrap: wrap; }
   .proposal .status { font-size: 12px; color: var(--muted); padding: 9px 11px; border-top: 1px solid var(--border); }
+  .proposal .countdown {
+    font-family: var(--mono); font-size: 10.5px; color: var(--warn);
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px;
+  }
+  .proposal .countdown.low { color: var(--err); border-color: var(--err); }
+  .proposal .p-actions .btn[disabled] { opacity: .4; cursor: not-allowed; }
+  .proposal.expired { border-color: var(--border); opacity: .75; }
+  .proposal .status.ok { color: var(--ok); }
+  .proposal .status.denied { color: var(--warn); }
+  .proposal .status.err { color: var(--err); }
 
   /* waiting pill */
-  .wait { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
-  .wait .spin { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+  .wait {
+    display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    color: var(--muted); font-size: 12.5px;
+  }
+  .wait .spin { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .wait .timer { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .wait .hint { color: var(--warn); font-size: 12px; }
+  .wait.stalled { color: var(--err); }
+  .wait.stalled .spin { border-top-color: var(--err); animation-duration: 2.4s; }
 
   .line { font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
   .line.err { color: var(--err); }
@@ -386,13 +443,14 @@
       <path d="M10.5 22V10l11 12V10" fill="none" stroke="url(#brandGrad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
     <span class="name">nour-code</span>
-    <span class="ver" id="ver">1.3.0</span>
+    <span class="ver" id="ver">1.4.0</span>
   </div>
 
   <div class="conn">
     <span class="dot" id="dot"></span>
     <span class="model" id="model">—</span>
     <span class="sess" id="session">—</span>
+    <span class="phase" id="phase">idle</span>
   </div>
 
   <div class="spacer"></div>
@@ -515,7 +573,21 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     waitStart: null,
     turn: null,
     busy: false,
+    lastByteAt: 0,
+    watchdog: null,
+    watchdogFired: null,
+    stallNoted: false,
+    phaseAfterTurn: null,
+    collapseTimers: [],
   };
+
+  /* ---------------- status chip ---------------- */
+  function setPhase(label, kind) {
+    const chip = $('phase');
+    chip.textContent = label;
+    chip.className = 'phase' + (kind ? ' ' + kind : '');
+  }
+
 
   /* ---------------- theme ---------------- */
   function applyTheme() {
@@ -658,9 +730,13 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
       case 'tool_call': return data.tool + ' ' + shortArgs(data.arguments);
       case 'tool_result': return `${data.tool} ${data.status}${data.error ? ' — ' + data.error : ''}`;
       case 'tool_proposal': return `${data.tool} needs approval (${data.risk})`;
-      case 'status': return data.phase === 'model_call'
-        ? `calling ${data.model} — iteration ${data.iteration}`
-        : `model responded in ${Math.round(data.wait_ms)} ms`;
+      case 'status': {
+        if (data.phase === 'model_call') return `calling ${data.model} — iteration ${data.iteration}`;
+        if (data.phase === 'waiting') return `no token yet — ${Math.round((data.waited_ms || 0) / 1000)}s`;
+        if (data.phase === 'model_streaming') return `first token after ${Math.round(data.wait_ms)} ms`;
+        if (data.phase === 'queued') return data.message || 'queued behind another turn';
+        return data.phase;
+      }
       case 'usage': return `${data.total_tokens} tokens (iteration ${data.iteration})`;
       case 'file_change': return `${data.action} ${data.path}`;
       case 'verification': return `${data.command} → exit ${data.exit_code}`;
@@ -724,19 +800,45 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     const iteration = data.iteration || 1;
     if (!turn.thinkBlocks) turn.thinkBlocks = new Map();
 
-    let body = turn.thinkBlocks.get(iteration);
-    if (!body) {
-      const details = el('details', 'think');
+    let block = turn.thinkBlocks.get(iteration);
+    if (!block) {
+      const details = el('details', 'think is-live');
       const summary = el('summary');
-      summary.appendChild(el('span', null, iteration > 1 ? `thinking · iteration ${iteration}` : 'thinking'));
-      body = el('div', 'think-body');
+      summary.appendChild(
+        el('span', null, iteration > 1 ? `thinking · iteration ${iteration}` : 'thinking'),
+      );
+      const dots = el('span', 'dots');
+      dots.append(el('i'), el('i'), el('i'));
+      const meta = el('span', 'meta', '0 chars');
+      summary.append(dots, meta);
+      const body = el('div', 'think-body');
       details.append(summary, body);
       details.open = state.showThinking && $('think').checked;
       turn.cards.parentElement.insertBefore(details, turn.cards);
-      turn.thinkBlocks.set(iteration, body);
+      block = { details, body, meta, dots, started: performance.now(), chars: 0 };
+      turn.thinkBlocks.set(iteration, block);
     }
-    body.textContent += data.text || '';
+
+    const text = data.text || '';
+    block.chars += text.length;
+    block.body.textContent += text;
+    block.meta.textContent =
+      `${block.chars} chars · ${((performance.now() - block.started) / 1000).toFixed(1)}s`;
+    setPhase('thinking', 'think');
     scrollDown();
+  }
+
+  /** The model stopped reasoning: freeze the counters, drop the pulsing dots. */
+  function closeThinking(turn) {
+    if (!turn || !turn.thinkBlocks) return;
+    for (const block of turn.thinkBlocks.values()) {
+      if (!block.dots) continue;
+      block.dots.remove();
+      block.dots = null;
+      block.details.classList.remove('is-live');
+      const seconds = ((performance.now() - block.started) / 1000).toFixed(1);
+      block.meta.textContent = `${block.chars} chars · ${seconds}s`;
+    }
   }
 
   function renderToolCall(data) {
@@ -763,8 +865,15 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     const card = document.querySelector(`details.card[data-tool-id="${data.id}"]`);
     if (!card) return;
     const pill = card.querySelector('.state');
-    pill.textContent = data.rejected ? 'rejected' : data.status;
-    pill.className = 'state ' + (data.rejected ? 'denied' : data.status === 'ok' ? 'ok' : data.status === 'denied' ? 'denied' : 'err');
+    const label = data.timed_out ? 'timed out' : data.rejected ? 'rejected' : data.status;
+    pill.textContent = label;
+    pill.className =
+      'state ' +
+      (data.timed_out || data.rejected || data.status === 'denied'
+        ? 'denied'
+        : data.status === 'ok'
+          ? 'ok'
+          : 'err');
     const body = card.querySelector('.card-body');
     body.textContent = '';
     const payload = data.error ? data.error : (typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2));
@@ -785,6 +894,8 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     head.appendChild(icon('file', 'i-sm'));
     head.appendChild(el('span', 'name', data.tool));
     head.appendChild(el('span', 'risk', (data.risk || 'low') + ' risk'));
+    const countdown = el('span', 'countdown', '');
+    head.appendChild(countdown);
     box.appendChild(head);
 
     const body = el('div', 'p-body');
@@ -799,16 +910,91 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     actions.append(approve, reject, approveAll, rejectAll);
     box.appendChild(actions);
 
-    const decide = (decision, withId) => {
+    const timeout = Number(data.timeout_seconds) || 0;
+    const expiresAt = timeout ? Date.now() + timeout * 1000 : 0;
+
+    const setStatus = (text, kind) => {
+      let status = box.querySelector('.status');
+      if (!status) {
+        status = el('div', 'status');
+        box.appendChild(status);
+      }
+      status.textContent = text;
+      status.className = 'status' + (kind ? ' ' + kind : '');
+      box.classList.toggle('expired', kind === 'denied' || kind === 'err');
+    };
+
+    const stopTicking = () => {
+      if (box._timer) {
+        clearInterval(box._timer);
+        box._timer = null;
+      }
+    };
+
+    const expire = (text) => {
+      stopTicking();
       actions.remove();
-      box.appendChild(el('div', 'status', decision.startsWith('approve') ? 'approved — running…' : 'rejected'));
+      countdown.remove();
+      setStatus(text, 'denied');
+    };
+
+    const tick = () => {
+      if (!expiresAt) {
+        countdown.remove();
+        return;
+      }
+      const left = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+      const minutes = Math.floor(left / 60);
+      const seconds = String(left % 60).padStart(2, '0');
+      countdown.textContent = `${minutes}:${seconds}`;
+      countdown.classList.toggle('low', left <= 30);
+      if (left <= 0) expire('timed out — nothing ran');
+    };
+    if (expiresAt) {
+      tick();
+      box._timer = setInterval(tick, 1000);
+    } else {
+      countdown.remove();
+    }
+
+    const decide = (decision, withId) => {
+      stopTicking();
+      actions.remove();
+      countdown.remove();
+      setStatus(decision.startsWith('approve') ? 'approved — running…' : 'rejected');
       const payload = { decision };
       if (withId) payload.proposal_id = data.id;
       fetch(`/sessions/${state.sessionId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      }).catch((err) => pushEvent('error', { code: 'approval_failed', message: String(err), ts: Date.now() / 1000 }));
+      })
+        .then(async (response) => {
+          if (response.ok) return;
+          const detail = (await response.text().catch(() => '')).slice(0, 300);
+          let message = `the server refused this decision (HTTP ${response.status})`;
+          if (response.status === 404) {
+            message = 'this proposal expired — the turn is no longer waiting';
+          } else if (response.status === 400) {
+            message = 'this card sent no proposal id — reload the page';
+          }
+          setStatus(message, 'err');
+          setPhase('approval failed', 'err');
+          pushEvent('warning', {
+            code: 'approval_failed',
+            message: `${message}${detail ? ' — ' + detail : ''}`,
+            ts: Date.now() / 1000,
+          });
+        })
+        .catch((err) => {
+          setStatus(`network error — ${err.message || err}`, 'err');
+          setPhase('approval failed', 'err');
+          pushEvent('error', {
+            code: 'approval_failed',
+            message: String(err),
+            ts: Date.now() / 1000,
+          });
+        });
     };
 
     approve.addEventListener('click', () => decide('approve', true));
@@ -818,18 +1004,52 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
 
     turn.cards.appendChild(box);
     turn.empty = false;
+    setPhase('waiting for approval', 'wait');
     scrollDown();
   }
 
   function resolveProposal(data) {
-    for (const [id, proposal] of state.proposals) {
-      if (proposal.tool !== data.tool) continue;
-      const box = document.querySelector(`.proposal[data-proposal-id="${id}"]`);
-      if (!box) continue;
-      const status = box.querySelector('.status');
-      if (status) status.textContent = data.status === 'ok' ? 'executed' : 'not run — the tool was rejected';
-      state.proposals.delete(id);
-      break;
+    let entry = data.proposal_id ? [data.proposal_id, state.proposals.get(data.proposal_id)] : null;
+    if (!entry || !entry[1]) {
+      // older servers do not echo proposal_id; fall back to the tool name
+      for (const candidate of state.proposals) {
+        if (candidate[1].tool === data.tool) {
+          entry = candidate;
+          break;
+        }
+      }
+    }
+    if (!entry || !entry[1]) return;
+    const [id] = entry;
+    state.proposals.delete(id);
+    const box = document.querySelector(`.proposal[data-proposal-id="${id}"]`);
+    if (!box) return;
+    if (box._timer) {
+      clearInterval(box._timer);
+      box._timer = null;
+    }
+    box.querySelector('.p-actions')?.remove();
+    box.querySelector('.countdown')?.remove();
+    let status = box.querySelector('.status');
+    if (!status) {
+      status = el('div', 'status');
+      box.appendChild(status);
+    }
+    if (data.timed_out) {
+      status.textContent = 'timed out — nothing ran';
+      status.className = 'status denied';
+      box.classList.add('expired');
+    } else if (data.rejected) {
+      status.textContent = 'rejected — nothing ran';
+      status.className = 'status denied';
+      box.classList.add('expired');
+    } else if (data.status === 'ok') {
+      status.textContent = `executed in ${Math.round(data.duration_ms || 0)} ms`;
+      status.className = 'status ok';
+    } else {
+      status.textContent = `failed — ${data.error || data.status}`;
+      status.className = 'status err';
+      box.classList.add('expired');
     }
   }
 
@@ -851,41 +1071,98 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     turn.empty = false;
   }
 
+  function fmtElapsed(ms) {
+    const seconds = ms / 1000;
+    if (seconds < 60) return seconds.toFixed(1) + 's';
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}m ${String(Math.floor(seconds % 60)).padStart(2, '0')}s`;
+  }
+
+  function ensureTicker() {
+    if (state.ticker) return;
+    state.ticker = setInterval(() => {
+      const turn = state.turn;
+      if (turn && turn.waiting && state.waitStart) {
+        if (turn.waitTimer) turn.waitTimer.textContent = fmtElapsed(performance.now() - state.waitStart);
+      }
+      updateStats();
+    }, 100);
+  }
+
+  /** One spinner, one label, one elapsed clock — reused by every waiting phase. */
+  function showWait(turn, label, kind) {
+    if (!turn) return;
+    if (!turn.waiting) {
+      const wait = el('div', 'wait');
+      wait.appendChild(el('span', 'spin'));
+      const text = el('span', 'label', label);
+      const timer = el('span', 'timer', '0.0s');
+      wait.append(text, timer);
+      turn.cards.parentElement.insertBefore(wait, turn.cards);
+      turn.waiting = wait;
+      turn.waitLabel = text;
+      turn.waitTimer = timer;
+      state.waitStart = performance.now();
+    } else if (turn.waitLabel) {
+      turn.waitLabel.textContent = label;
+    }
+    if (turn.waiting) turn.waiting.classList.toggle('stalled', kind === 'stalled');
+    ensureTicker();
+    scrollDown();
+  }
+
+  function removeWait(turn) {
+    if (!turn || !turn.waiting) return;
+    turn.waiting.remove();
+    turn.waiting = null;
+    turn.waitLabel = null;
+    turn.waitTimer = null;
+    state.waitStart = null;
+  }
+
   function renderStatus(data) {
     const turn = state.turn;
     if (!turn) return;
-    if (data.phase === 'model_call') {
-      if (turn.waiting) turn.waiting.remove();
-      const wait = el('div', 'wait');
-      wait.appendChild(el('span', 'spin'));
-      wait.appendChild(el('span', null, `waiting for ${data.model} · iteration ${data.iteration}`));
-      const timer = el('span', null, '0.0s');
-      wait.appendChild(timer);
-      turn.cards.parentElement.insertBefore(wait, turn.cards);
-      turn.waiting = wait;
-      state.waitStart = performance.now();
-      if (!state.ticker) {
-        state.ticker = setInterval(() => {
-          if (turn.waiting && state.waitStart) {
-            timer.textContent = ((performance.now() - state.waitStart) / 1000).toFixed(1) + 's';
-          }
-          updateStats();
-        }, 100);
-      }
-    } else if (data.phase === 'waiting' && turn.waiting) {
-      // The server sends this every few seconds while the model is silent -
-      // usually because a cold turn is still loading ~6 GB of weights.
-      const seconds = Math.round((data.waited_ms || 0) / 1000);
-      if (seconds >= 8 && !turn.waitHint) {
-        turn.waitHint = true;
-        turn.waiting.appendChild(
-          el('span', 'hint', 'loading the model into memory - the first call can take a minute'),
+    switch (data.phase) {
+      case 'queued':
+        showWait(turn, data.message || 'another turn is still running in this session', 'wait');
+        setPhase('queued', 'wait');
+        break;
+      case 'turn_started':
+        removeWait(turn);
+        setPhase('starting', 'busy');
+        break;
+      case 'model_call':
+        showWait(
+          turn,
+          `thinking with ${data.model || 'the model'} · iteration ${data.iteration || 1}`,
+          'think',
         );
+        setPhase('thinking', 'think');
+        break;
+      case 'waiting': {
+        // Every few seconds while the model is silent — usually a cold load of
+        // ~6 GB of weights. The clock keeps counting; after 8 s say what it is.
+        const seconds = Math.round((data.waited_ms || 0) / 1000);
+        showWait(turn, 'loading the model into memory', 'busy');
+        // continue counting from the server's elapsed time, not from this frame
+        if (data.waited_ms) state.waitStart = performance.now() - data.waited_ms;
+        if (turn.waitTimer) turn.waitTimer.textContent = fmtElapsed(data.waited_ms || 0);
+        if (seconds >= 8 && !turn.waitHint) {
+          turn.waitHint = true;
+          turn.waiting?.appendChild(
+            el('span', 'hint', 'the first call after a cold start can take a minute'),
+          );
+        }
+        setPhase(`loading model · ${seconds}s`, 'wait');
+        break;
       }
-    } else if (data.phase === 'model_streaming' && turn.waiting) {
-      turn.waiting.remove();
-      turn.waiting = null;
-      state.waitStart = null;
+      case 'model_streaming':
+        removeWait(turn);
+        setPhase('streaming', 'busy');
+        break;
+      default:
+        break;
     }
   }
 
@@ -914,12 +1191,15 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     pushEvent(type, data);
     switch (type) {
       case 'thinking':
+        if (state.turn) removeWait(state.turn);
         renderThinking(data);
         break;
       case 'token':
         if (state.turn) {
+          closeThinking(state.turn);
           state.turn.text.textContent += data.text || '';
           state.turn.empty = false;
+          setPhase('streaming', 'busy');
           scrollDown();
         }
         break;
@@ -927,13 +1207,24 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
         renderStatus(data);
         break;
       case 'tool_call':
+        if (state.turn) {
+          removeWait(state.turn);
+          closeThinking(state.turn);
+        }
         renderToolCall(data);
+        setPhase(`running ${data.tool || 'a tool'}`, 'busy');
         break;
       case 'tool_result':
+        if (state.turn) removeWait(state.turn);
         renderToolResult(data);
         resolveProposal(data);
+        setPhase(data.status === 'ok' ? 'continuing' : 'continuing after an error', 'busy');
         break;
       case 'tool_proposal':
+        if (state.turn) {
+          removeWait(state.turn);
+          closeThinking(state.turn);
+        }
         renderProposal(data);
         break;
       case 'usage':
@@ -951,6 +1242,8 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
         break;
       case 'error':
         renderError(data);
+        state.phaseAfterTurn = 'error';
+        setPhase('error', 'err');
         break;
       case 'done':
         finishTurn(data);
@@ -963,7 +1256,8 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
   function finishTurn(data) {
     const turn = state.turn;
     if (turn) {
-      if (turn.waiting) turn.waiting.remove();
+      closeThinking(turn);
+      removeWait(turn);
       if (turn.empty) {
         turn.text.appendChild(el('span', 'empty-note', '(no text returned — check the thinking block and the stream)'));
       }
@@ -976,12 +1270,34 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
         });
       }
     }
+    // Any card still on screen belongs to a turn that is over: its buttons
+    // would post to a gate that no longer exists.
+    for (const [id, proposal] of [...state.proposals]) {
+      state.proposals.delete(id);
+      const box = document.querySelector(`.proposal[data-proposal-id="${id}"]`);
+      if (!box) continue;
+      if (box._timer) {
+        clearInterval(box._timer);
+        box._timer = null;
+      }
+      box.querySelector('.p-actions')?.remove();
+      box.querySelector('.countdown')?.remove();
+      const status = box.querySelector('.status') || box.appendChild(el('div', 'status'));
+      status.textContent = 'the turn ended before a decision';
+      status.className = 'status denied';
+      box.classList.add('expired');
+    }
     state.turn = null;
+    stopWatchdog();
+    const lingering = state.phaseAfterTurn;
+    setPhase(lingering || 'idle', lingering ? 'err' : undefined);
+    state.phaseAfterTurn = null;
   }
 
   /* ---------------- send ---------------- */
   function startTimer() {
     state.startedAt = Date.now();
+    ensureTicker();
     updateStats();
   }
   function stopTimer() {
@@ -994,6 +1310,66 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     state.busy = busy;
     $('stop').disabled = !busy;
     $('send').disabled = busy;
+    if (!busy) stopWatchdog();
+  }
+
+  /* A dead connection is otherwise invisible: fetch() rejects, or worse, the
+     read loop simply never yields again. Keepalives arrive every 15 s, so
+     silence is meaningful. */
+  function stopWatchdog() {
+    if (state.watchdog) {
+      clearInterval(state.watchdog);
+      state.watchdog = null;
+    }
+  }
+
+  function startWatchdog() {
+    stopWatchdog();
+    state.lastByteAt = Date.now();
+    state.stallNoted = false;
+    state.watchdogFired = null;
+    state.watchdog = setInterval(() => {
+      if (!state.busy) return;
+      const idle = Date.now() - state.lastByteAt;
+      if (idle > 90000) {
+        state.watchdogFired =
+          `the stream went silent for ${Math.round(idle / 1000)}s — ` +
+          'the server may have restarted. Nothing else is coming; send the message again.';
+        try {
+          state.controller?.abort();
+        } catch (err) {
+          /* already aborted */
+        }
+        return;
+      }
+      if (idle > 45000 && !state.stallNoted) {
+        state.stallNoted = true;
+        setPhase('no data — still waiting', 'wait');
+        const turn = state.turn;
+        if (turn) {
+          const line = el('div', 'line warn');
+          line.appendChild(icon('alert', 'i-sm'));
+          line.appendChild(
+            el('span', null, `no data for ${Math.round(idle / 1000)}s — waiting for the server`),
+          );
+          turn.cards.appendChild(line);
+          turn.stallLine = line;
+          scrollDown();
+        }
+      }
+    }, 1000);
+  }
+
+  function markStreamAlive() {
+    state.lastByteAt = Date.now();
+    if (!state.stallNoted) return;
+    state.stallNoted = false;
+    const turn = state.turn;
+    if (turn && turn.stallLine) {
+      turn.stallLine.remove();
+      turn.stallLine = null;
+    }
+    setPhase('streaming', 'busy');
   }
 
   async function streamMessage() {
@@ -1004,6 +1380,8 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
     newTurn(message);
     setBusy(true);
     startTimer();
+    startWatchdog();
+    setPhase('connecting', 'busy');
     state.controller = new AbortController();
 
     try {
@@ -1038,6 +1416,7 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
       let buffer = '';
       while (true) {
         const { value, done } = await reader.read();
+        markStreamAlive();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         let index = buffer.indexOf('\n\n');
@@ -1060,7 +1439,17 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
         }
       }
     } catch (err) {
-      if (err && err.name === 'AbortError') {
+      if (err && err.name === 'AbortError' && state.watchdogFired) {
+        pushEvent('error', { code: 'stream_lost', message: state.watchdogFired, ts: Date.now() / 1000 });
+        if (state.turn) {
+          const line = el('div', 'line err');
+          line.appendChild(icon('x', 'i-sm'));
+          line.appendChild(el('span', null, state.watchdogFired));
+          state.turn.cards.appendChild(line);
+        }
+        state.phaseAfterTurn = 'connection lost';
+        setPhase('connection lost', 'err');
+      } else if (err && err.name === 'AbortError') {
         pushEvent('warning', { message: 'stopped by user', ts: Date.now() / 1000 });
         if (state.turn) {
           state.turn.stopped = true;
@@ -1069,14 +1458,24 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
           note.appendChild(el('span', null, ' stopped'));
           state.turn.text.appendChild(note);
         }
+        setPhase('stopped', 'wait');
       } else {
-        pushEvent('error', { code: 'client_error', message: String(err), ts: Date.now() / 1000 });
+        const message = err && err.message ? `${err.name || 'Error'}: ${err.message}` : String(err);
+        pushEvent('error', { code: 'client_error', message, ts: Date.now() / 1000 });
         if (state.turn) {
           const line = el('div', 'line err');
           line.appendChild(icon('x', 'i-sm'));
-          line.appendChild(el('span', null, String(err)));
+          line.appendChild(
+            el(
+              'span',
+              null,
+              `${message} — the connection dropped; the server may have restarted.`,
+            ),
+          );
           state.turn.cards.appendChild(line);
         }
+        state.phaseAfterTurn = 'connection lost';
+        setPhase('connection lost', 'err');
       }
     } finally {
       finishTurn(null);

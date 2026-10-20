@@ -871,10 +871,138 @@ pre {
   padding: 2px 6px;
 }
 
+.preview__phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--warn);
+  border: 1px solid rgba(255, 196, 107, 0.3);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.preview__phase i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: preview-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes preview-pulse {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+.preview__pulse {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 1px;
+}
+
+.preview__pulse i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  animation: preview-pulse 1.2s ease-in-out infinite;
+}
+
+.preview__pulse i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.preview__pulse i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+.preview__think-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--dimmer);
+}
+
+.preview__gate {
+  border: 1px solid rgba(255, 196, 107, 0.45);
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.preview__gate-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.preview__gate-tool {
+  color: var(--text);
+}
+
+.preview__gate-risk {
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+}
+
+.preview__gate-clock {
+  margin-left: auto;
+  font-size: 0.64rem;
+  color: var(--warn);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.preview__gate-args {
+  padding: 0 10px 7px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--dim);
+}
+
+.preview__gate-actions {
+  display: flex;
+  gap: 6px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.preview__gate-actions span {
+  font-size: 0.64rem;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  color: var(--dim);
+}
+
+.preview__gate-actions .is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0c07;
+}
+
 .preview__body {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
-  min-height: 430px;
+  min-height: 470px;
 }
 
 .preview__chat {

@@ -232,3 +232,55 @@ async def test_approve_all_sets_the_auto_flag(client) -> None:
     finally:
         task.cancel()
         container.approvals.discard("sess_all")
+
+
+def test_decision_remembers_its_proposal_id() -> None:
+    """The UI needs to know which card a result belongs to - tool names repeat."""
+    from nour_code.approvals import ApprovalDecision
+
+    decision = ApprovalDecision("approved", proposal_id="prop_123")
+    assert decision == "approved"  # still a plain string for every caller
+    assert decision.proposal_id == "prop_123"
+    assert not decision.timed_out
+    assert ApprovalDecision("timeout", proposal_id="prop_9").timed_out
+
+
+async def test_gate_returns_the_id_in_the_decision() -> None:
+    gate = ApprovalGate(session_id="sess_ids", timeout_seconds=5)
+    task = asyncio.create_task(gate.request(tool="write_file", arguments={"path": "a.py"}))
+    await asyncio.sleep(0)
+    proposal_id = gate.pending[0]["id"]
+    gate.resolve(proposal_id, "approved")
+    decision = await task
+    assert decision == "approved"
+    assert decision.proposal_id == proposal_id
+
+
+async def test_approval_timeout_ends_the_turn(container, sandbox: Path) -> None:
+    """A missing human must not park the turn for 15 iterations x 5 minutes."""
+    from nour_code.approvals import ApprovalRegistry
+    from tests.conftest import FakeModel
+
+    container.agent.client = FakeModel()
+    container.agent.client.add_tool_call("write_file", path="too_late.txt", content="never")
+    container.agent.client.add_text("should not be reached")
+    container.agent.approvals = ApprovalRegistry(timeout_seconds=0.05)
+
+    session = await container.store.get_or_create()
+    events = []
+    async for event in container.agent.run_stream(session, "write it", approval_mode="mutating"):
+        events.append(event)
+
+    assert not (sandbox / "too_late.txt").exists()
+    result = next(event for event in events if event.type == "tool_result")
+    assert result.data["rejected"] is True
+    assert result.data["timed_out"] is True
+    assert result.data["proposal_id"]
+
+    warning = next(event for event in events if event.type == "warning")
+    assert warning.data["code"] == "approval_timeout"
+
+    done = next(event for event in events if event.type == "done")
+    assert done.data["response"]["finish_reason"] == "approval_timeout"
+    assert done.data["response"]["finished"] is False
+    assert any("approval timed out" in warning for warning in done.data["response"]["warnings"])

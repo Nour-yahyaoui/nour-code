@@ -5,6 +5,46 @@ semantic versioning: `MAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-20 · a turn can no longer hang
+
+The console now shows what the agent is doing, and an approval nobody answers
+ends the turn instead of parking it for the afternoon.
+
+### Fixed — a missing approval no longer eats the turn
+
+* **An approval timeout ends the turn.** Previously the gate returned `timeout`,
+  the agent wrote a `DENIED:` result and asked the model to try something else;
+  with the default 300 s window and 15 iterations, one unanswered card could
+  park a request for over an hour. The turn now stops with
+  `finish_reason="approval_timeout"` and a warning that names the tool.
+* **`tool_result` echoes `proposal_id` and `timed_out`.** The console used to
+  match results to proposals by tool name, so two `write_file` calls marked the
+  wrong card "executed".
+* **The console no longer pretends a failed approval worked.** It checks the
+  response from `POST /sessions/{id}/approve`: a 404 becomes "this proposal
+  expired", a 400 says the card sent no id, and a network failure is reported —
+  instead of showing "approved — running…" until the server times out.
+* **Proposal cards expire on screen.** Each one counts down from
+  `timeout_seconds`; at zero the buttons disappear and the card says
+  "timed out — nothing ran". Cards left over when a turn ends are marked the
+  same way.
+
+### Added — the console shows what the agent is doing
+
+* A status chip in the topbar (`thinking`, `loading model · 42s`,
+  `streaming`, `running write_file`, `waiting for approval`, `connection lost`).
+* The thinking block animates while tokens arrive (pulsing dots, live
+  character/time counter, caret) and settles when reasoning ends.
+* Real labels for the wait: `queued` while another turn holds the session lock
+  (the server now emits that phase before acquiring it), `turn_started`, and
+  the cold-start hint after 8 s.
+* A watchdog on the event stream: 45 s of silence adds an inline warning, 90 s
+  aborts the request with "the server may have restarted" instead of leaving a
+  turn that will never finish.
+* Rejected calls are labelled `timed out` / `rejected` rather than a bare
+  `denied · 0 ms`, which looked like an instant rejection but meant "nothing
+  ran".
+
 ## [1.3.0] — 2026-10-20 · cold starts are visible, the page is for everyone
 
 The release where the console stopped looking frozen, stop started stopping,
