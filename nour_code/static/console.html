@@ -1055,8 +1055,18 @@ Nothing here can be edited — the viewer is read-only by design.</pre>
       const response = await fetch('/health');
       const data = await response.json();
       const up = data.ollama_reachable && data.model_loaded;
+      const state = !data.ollama_reachable
+        ? ' (offline)'
+        : !data.model_loaded
+          ? ' (not pulled)'
+          : data.model_running
+            ? ' (resident)'
+            : ' (idle)';
       $('dot').className = 'dot ' + (up ? 'up' : 'down');
-      $('model').textContent = data.model + (data.model_loaded ? '' : ' (not loaded)');
+      $('model').textContent = data.model + state;
+      $('model').title = data.model_running && data.model_expires_at
+        ? 'loaded until ' + data.model_expires_at
+        : 'loaded on demand (first request), unloaded after Ollama keep_alive';
       $('ver').textContent = 'v' + data.version;
     } catch (err) {
       $('dot').className = 'dot down';

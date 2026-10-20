@@ -257,6 +257,11 @@ async def test_health_reports_model_loaded() -> None:
             return httpx.Response(200, json={"version": "0.5.1"})
         if request.url.path == "/api/tags":
             return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}, {"name": "llama3.2:1b"}]})
+        if request.url.path == "/api/ps":
+            return httpx.Response(
+                200,
+                json={"models": [{"name": "qwen3:8b", "expires_at": "2026-01-01T00:05:00Z", "size_vram": 5_000}]},
+            )
         return httpx.Response(404, text="nope")
 
     client = make_client(handler)
@@ -265,6 +270,62 @@ async def test_health_reports_model_loaded() -> None:
     assert info["version"] == "0.5.1"
     assert info["model_loaded"] is True
     assert info["models"] == ["llama3.2:1b", "qwen3:8b"]
+    assert info["model_running"] is True
+    assert info["running_models"] == ["qwen3:8b"]
+    assert info["model_expires_at"] == "2026-01-01T00:05:00Z"
+
+
+async def test_health_distinguishes_pulled_from_running() -> None:
+    """A pulled model with nothing in ``/api/ps`` is idle, not missing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.5.1"})
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+        if request.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": []})
+        return httpx.Response(404, text="nope")
+
+    client = make_client(handler)
+    info = await client.health()
+    assert info["model_loaded"] is True
+    assert info["model_running"] is False
+    assert info["model_expires_at"] is None
+    assert info["detail"] is None
+
+
+async def test_health_survives_a_failing_residency_probe() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.5.1"})
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+        return httpx.Response(404, text="nope")
+
+    client = make_client(handler)
+    info = await client.health()
+    assert info["model_loaded"] is True  # /health must survive an old daemon
+    assert info["model_running"] is False
+
+
+async def test_ps_does_not_match_a_different_size() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/ps"
+        return httpx.Response(200, json={"models": [{"name": "qwen3:14b"}]})
+
+    client = make_client(handler)
+    state = await client.ps()
+    assert state["running"] is False
+    assert state["models"][0]["name"] == "qwen3:14b"
+
+
+def test_same_model_is_strict_about_tags() -> None:
+    assert OllamaClient._same_model("qwen3:8b", "qwen3:8b") is True
+    assert OllamaClient._same_model("qwen3:8b", "qwen3") is True  # untagged request
+    assert OllamaClient._same_model("qwen3", "qwen3:8b") is True  # untagged resident
+    assert OllamaClient._same_model("qwen3:14b", "qwen3:8b") is False
+    assert OllamaClient._same_model("llama3.2:1b", "qwen3:8b") is False
 
 
 async def test_health_flags_missing_model() -> None:
@@ -294,6 +355,51 @@ def test_model_available_matches_family() -> None:
     assert OllamaClient._model_available(["qwen3:latest"], "qwen3:8b") is True
     assert OllamaClient._model_available(["llama3.2:1b"], "qwen3:8b") is False
     assert OllamaClient._model_available([], "qwen3:8b") is False
+
+
+# ---------------------------------------------------------------------------
+# residency control
+# ---------------------------------------------------------------------------
+async def test_load_model_uses_native_generate_with_keep_alive() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/generate":
+            return httpx.Response(200, json={"model": "qwen3:8b", "done": True, "done_reason": "load"})
+        if request.url.path == "/api/ps":
+            return httpx.Response(
+                200, json={"models": [{"name": "qwen3:8b", "expires_at": "2026-01-01T00:30:00Z"}]}
+            )
+        return httpx.Response(404, text="nope")
+
+    client = make_client(handler)
+    state = await client.load_model(keep_alive="30m")
+    assert state["running"] is True
+    assert state["keep_alive"] == "30m"
+    assert state["expires_at"] == "2026-01-01T00:30:00Z"
+
+    body = json.loads(seen[0].content)
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/api/generate"
+    assert body == {"model": "qwen3:8b", "stream": False, "keep_alive": "30m"}
+    assert "prompt" not in body  # no prompt = load only
+
+
+async def test_unload_model_sends_keep_alive_zero() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/generate":
+            return httpx.Response(200, json={"model": "qwen3:8b", "done": True, "done_reason": "unload"})
+        return httpx.Response(200, json={"models": []})
+
+    client = make_client(handler)
+    state = await client.unload_model()
+    assert state["running"] is False
+    assert state["keep_alive"] == "0"
+    assert json.loads(seen[0].content)["keep_alive"] == 0
 
 
 # ---------------------------------------------------------------------------

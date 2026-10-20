@@ -38,6 +38,8 @@ def test_derived_urls() -> None:
     assert settings.chat_completions_url == "http://localhost:11434/v1/chat/completions"
     assert settings.models_url == "http://localhost:11434/v1/models"
     assert settings.native_tags_url == "http://localhost:11434/api/tags"
+    assert settings.native_ps_url == "http://localhost:11434/api/ps"
+    assert settings.native_generate_url == "http://localhost:11434/api/generate"
     assert settings.ollama_version_url == "http://localhost:11434/api/version"
 
 
@@ -153,6 +155,12 @@ def test_describe_hides_nothing_sensitive_but_is_stable() -> None:
 def test_unknown_env_variables_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}NOT_A_FIELD", "x")
     assert Settings().model == "qwen3:8b"
+
+
+def test_keep_alive_defaults_to_unset_and_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings().keep_alive is None  # defer to Ollama's 5m default
+    monkeypatch.setenv(f"{ENV_PREFIX}KEEP_ALIVE", "-1")
+    assert Settings().keep_alive == "-1"
 
 
 # ---------------------------------------------------------------------------

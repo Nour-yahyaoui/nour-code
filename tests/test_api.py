@@ -52,6 +52,8 @@ def test_health_endpoint(client) -> None:
     assert body["ollama_reachable"] is True
     assert body["model"] == "qwen3:8b"
     assert body["model_loaded"] is True
+    assert body["model_running"] is True
+    assert body["running_models"] == ["qwen3:8b"]
     assert body["skills_loaded"] == 2
     assert body["tools"] >= 15
 
@@ -69,6 +71,18 @@ def test_health_reports_missing_ollama(client) -> None:
     body = test_client.get("/health").json()
     assert body["status"] == "down"
     assert body["ollama_reachable"] is False
+
+
+def test_warmup_and_unload_endpoints(client) -> None:
+    test_client, _, _ = client
+    warm = test_client.post("/ollama/warmup?keep_alive=30m").json()
+    assert warm["action"] == "warmup"
+    assert warm["keep_alive"] == "30m"
+    assert warm["running"] is True
+
+    cold = test_client.post("/ollama/unload").json()
+    assert cold["action"] == "unload"
+    assert cold["running"] is False
 
 
 def test_list_skills(client) -> None:

@@ -108,19 +108,66 @@ Or install as a package (adds the `nour-code` console script):
 pip install -e ".[dev]"
 ```
 
+### Windows in one step
+
+```bat
+git clone https://github.com/Nour-yahyaoui/nour-code.git
+cd nour-code
+start.cmd                :: creates .venv, installs, runs the self-check, serves on :8000
+start.cmd --doctor       :: only the self-check
+```
+
+`start.cmd` stops with a readable message if Python 3.11+ is missing, a port is
+taken or Ollama is not reachable, instead of leaving you with a blank `curl`.
+
 ## 3. Run
 
 ```bash
 # recommended
 python -m uvicorn nour_code.main:app --host 0.0.0.0 --port 8000
 
-# or the bundled CLI (same thing, with --print-config / --reload / --workers)
+# or the bundled CLI (same thing, with --print-config / --doctor / --reload / --workers)
 python -m nour_code --port 8000
 nour-code --port 8000              # if installed with pip
 
 # development, auto-reload on file changes
 python -m uvicorn nour_code.main:app --reload --port 8000
 ```
+
+> **Nothing at `localhost:8000`?** `curl` printing nothing means the server is
+> not listening (nothing is running on that port, or it is bound elsewhere), not
+> that the model is broken. Run the self-check:
+
+```bash
+python -m nour_code --doctor
+```
+
+```
+nour-code doctor
+  [OK  ] python          3.11.2
+  [OK  ] dependencies    fastapi 0.143.0, uvicorn 0.54.0, httpx 0.28.1, ...
+  [OK  ] api port        0.0.0.0:8000 is free (the server is not running yet)
+  [OK  ] ollama          reachable at http://localhost:11434 (v0.12.0)
+  [OK  ] model pulled    qwen3:8b
+  [OK  ] model resident  qwen3:8b is idle (loads on the first turn; POST /ollama/warmup to preload)
+
+all checks passed.
+start the API with: python -m nour_code --host 0.0.0.0 --port 8000
+```
+
+The doctor checks Python, the dependency list, whether the API port is free (or
+already served by nour-code), Ollama reachability, whether the model is pulled,
+whether it is resident, and whether the context Ollama actually allocated
+matches `NOUR_CODE_NUM_CTX`. It exits non-zero when a check fails, so it also
+works in scripts and CI.
+
+> Learned the hard way: `ollama ps` showing `qwen3:8b ... CONTEXT 4096` while
+> `NOUR_CODE_NUM_CTX=16384` is expected on the `/v1` endpoint. Ollama's
+> OpenAI-compatible API drops `num_ctx`, so the daemon falls back to its own
+> default (4k unless `OLLAMA_CONTEXT_LENGTH` is set). Set
+> `OLLAMA_CONTEXT_LENGTH=16384` in the environment of the Ollama service, or
+> accept the 4k window.
+
 
 Then open:
 
@@ -163,6 +210,8 @@ curl -s http://localhost:8000/health | jq
   "ollama_url": "http://localhost:11434",
   "model": "qwen3:8b",
   "model_loaded": true,
+  "model_running": true,
+  "model_expires_at": "2026-10-20T12:05:00Z",
   "skills_loaded": 2,
   "active_sessions": 0,
   "tools": 15
@@ -181,6 +230,7 @@ file in the working directory is read automatically (see `.env.example`).
 | `NOUR_CODE_OLLAMA_API_KEY` | `ollama` | Bearer token (Ollama ignores it) |
 | `NOUR_CODE_TEMPERATURE` | `0.1` | Low temperature = deterministic code |
 | `NOUR_CODE_NUM_CTX` | `16384` | Context window passed to Ollama |
+| `NOUR_CODE_KEEP_ALIVE` | unset (Ollama: `5m`) | `keep_alive` used by `/ollama/warmup`: `30m`, `-1` (never unload), `0` |
 | `NOUR_CODE_NUM_PREDICT` | unset | Cap on generated tokens |
 | `NOUR_CODE_MAX_TURN_SECONDS` | `900` | Wall-clock budget for one turn (`time_budget`) |
 | `NOUR_CODE_MAX_TURN_TOKENS` | `0` | Token budget for one turn, `0` = unlimited (`token_budget`) |
@@ -367,8 +417,39 @@ curl -s -X DELETE http://localhost:8000/sessions/sess_9f2c1a7b3d44 | jq
 ### `GET /health`
 
 ```bash
-curl -s http://localhost:8000/health | jq '{status, ollama_reachable, model_loaded, tools}'
+curl -s http://localhost:8000/health | jq '{status, ollama_reachable, model_loaded, model_running, tools}'
 ```
+
+`model_loaded` and `model_running` answer two different questions:
+
+* `model_loaded` — is the model **pulled** (`ollama list` / `GET /api/tags`)?
+  It stays `true` even when nothing is in memory.
+* `model_running` — is it **in memory right now** (`ollama ps` / `GET /api/ps`)?
+  Ollama loads models on demand and unloads them after `keep_alive` (5 minutes
+  by default), so `{"model_loaded": true, "model_running": false}` is the
+  normal idle state.
+
+### `POST /ollama/warmup` / `POST /ollama/unload` — control model residency
+
+```bash
+# load qwen3:8b now and keep it for 30 minutes of idle time
+curl -s -X POST 'http://localhost:8000/ollama/warmup?keep_alive=30m' | jq
+# {"ok": true, "action": "warmup", "model": "qwen3:8b", "keep_alive": "30m",
+#  "running": true, "expires_at": "2026-10-20T12:35:00Z", "detail": null}
+
+# keep it loaded until it is unloaded (or Ollama restarts)
+curl -s -X POST 'http://localhost:8000/ollama/warmup?keep_alive=-1' | jq
+
+# free the memory now
+curl -s -X POST 'http://localhost:8000/ollama/unload' | jq
+```
+
+Both endpoints go through Ollama's **native** `/api/generate`, because the
+OpenAI-compatible `/v1/chat/completions` endpoint that nour-code uses for chat
+ignores `keep_alive` ([ollama/ollama#11458](https://github.com/ollama/ollama/issues/11458)).
+`NOUR_CODE_KEEP_ALIVE` supplies the default for `warmup` when the query
+parameter is omitted. Without a warm-up, the model appears in `ollama ps` only
+while a turn is running and for five minutes after it.
 
 ### `GET /audit` — tail the audit log
 
@@ -705,7 +786,7 @@ curl -s -X POST http://localhost:8000/chat/sync -H 'Content-Type: application/js
 | Application log | `logs/nour-code.log` | JSON lines, rotating 10 MB × 5 (`ts`, `level`, `logger`, `message`, plus structured extras) |
 | Audit trail | `logs/nour-code-audit.jsonl` | One object per tool call: `ts`, `session_id`, `tool`, `args_hash`, `result_status`, `duration_ms`, `iteration`, `source`, `skill`, `error` |
 | Metrics | `GET /metrics` | `nour_code_requests_total`, `nour_code_model_calls_total`, `nour_code_model_latency_seconds`, `nour_code_model_tokens_total`, `nour_code_tool_calls_total`, `nour_code_tool_latency_seconds`, `nour_code_agent_iterations_total`, `nour_code_sessions_active`, `nour_code_errors_total` |
-| Health | `GET /health` | Ollama reachability, version, whether the model is pulled, loaded skills/tools, active sessions |
+| Health | `GET /health` | Ollama reachability, version, whether the model is pulled (`model_loaded`) and resident (`model_running`), loaded skills/tools, active sessions |
 
 Arguments are stored as a **SHA-256 fingerprint** (`args_hash`), never verbatim,
 so the audit trail can be shipped without leaking file contents. Every model call
@@ -773,7 +854,7 @@ offline work.
 ```bash
 pip install -r requirements-dev.txt
 
-pytest                       # 320 tests
+pytest                       # 345 tests
 pytest -k security           # one area
 pytest --tb=short -q         # terse failures
 
@@ -812,14 +893,16 @@ nour-code/
 │   ├── models.py            # pydantic v2 schemas
 │   ├── observability.py     # JSON logs, audit trail, Prometheus metrics
 │   ├── config.py            # NOUR_CODE_* settings
+│   ├── doctor.py            # --doctor self-check (python, port, ollama, model)
 │   └── version_check.py     # Python 3.11 guard
 ├── static/
 │   └── console.html         # browser console (resizable panes + live events)
-├── tests/                   # 320 tests, no network required
+├── tests/                   # 345 tests, no network required
 ├── permissions.yaml
 ├── requirements.txt         # pinned versions
 ├── requirements-dev.txt
 ├── pyproject.toml
+├── start.cmd                # Windows: create venv, install, doctor, serve
 ├── Dockerfile
 ├── docker-compose.yml
 ├── SKILL_TEMPLATE.py
@@ -833,8 +916,13 @@ automatically) or point `NOUR_CODE_SKILLS_DIRS` somewhere else.
 
 | Symptom | Cause / fix |
 |---|---|
+| `curl -s localhost:8000/health` prints **nothing** | The server is not listening. Start it (`python -m nour_code --port 8000`, or `start.cmd` on Windows) and leave that terminal open; then re-run the curl. `python -m nour_code --doctor` says whether the port is free, taken by nour-code, or taken by something else |
+| `curl` works but the browser shows nothing | Check the port in the URL and any firewall/AV prompt; `--host 0.0.0.0` is only needed for other machines |
 | `health` shows `"ollama_reachable": false` | Start Ollama (`ollama serve`) or fix `NOUR_CODE_OLLAMA_BASE_URL` |
 | `health` shows `"model_loaded": false` | `ollama pull qwen3:8b` (or your `NOUR_CODE_MODEL`) |
+| `ollama ps` is empty although chatting works | Normal when no turn is running: Ollama loads on demand and unloads after 5 idle minutes. Preload with `POST /ollama/warmup` or start the daemon with `OLLAMA_KEEP_ALIVE=-1`. If it is still empty *during* a turn, the app and your shell are talking to different daemons — compare `NOUR_CODE_OLLAMA_BASE_URL` with `OLLAMA_HOST` (in Docker: `host.docker.internal`) |
+| `health` shows `"model_loaded": true, "model_running": false` | The model is pulled but idle — that is the normal state, not an error. Use `/ollama/warmup` to load it early |
+| Answers behave as if the prompt was cut at ~4k tokens | Ollama's OpenAI-compatible `/v1` endpoint currently ignores `num_ctx`; start the daemon with `OLLAMA_CONTEXT_LENGTH=16384` (or the model's own context) |
 | `DENIED: path … is outside the allowed roots` | Add the directory to `allowed_roots` or set `NOUR_CODE_ALLOWED_ROOTS` |
 | Warnings about Windows roots at startup | Expected on Linux/macOS — those roots do not exist here and are skipped. Add POSIX roots to silence it |
 | `git log --format` is refused | The spec's `format` deny pattern; see the note in `permissions.yaml` |
@@ -849,9 +937,11 @@ automatically) or point `NOUR_CODE_SKILLS_DIRS` somewhere else.
 Assumptions made where the brief left room for interpretation:
 
 1. **Ollama's OpenAI-compatible API** (`/v1/chat/completions`) is used for chat,
-   with `/api/tags` and `/api/version` for health checks — both are served by a
-   stock Ollama daemon. The API key is required by the protocol but ignored by
-   Ollama; `NOUR_CODE_OLLAMA_API_KEY` defaults to `ollama`.
+   with `/api/tags`, `/api/ps` and `/api/version` for health checks — all are
+   served by a stock Ollama daemon. The API key is required by the protocol but
+   ignored by Ollama; `NOUR_CODE_OLLAMA_API_KEY` defaults to `ollama`.
+   Residency control (`/ollama/warmup`, `/ollama/unload`) deliberately uses the
+   native `/api/generate`, because `/v1` ignores `keep_alive`.
 2. **Allowed roots** — the Windows roots from the spec are kept in
    `permissions.yaml` for fidelity, but roots that do not exist on the current
    host are skipped at load time and nour-code falls back to the working

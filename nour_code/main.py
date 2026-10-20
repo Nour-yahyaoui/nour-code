@@ -39,6 +39,7 @@ from .models import (
     FileEntry,
     FileListResponse,
     HealthResponse,
+    ModelMemoryResponse,
     ReloadSkillsResponse,
     SessionListResponse,
     SkillListResponse,
@@ -191,7 +192,10 @@ class Container:
             ollama_version=probe["version"],
             model=self.settings.model,
             model_loaded=bool(probe["model_loaded"]),
+            model_running=bool(probe.get("model_running")),
+            model_expires_at=probe.get("model_expires_at"),
             available_models=list(probe["models"])[:50],
+            running_models=[str(name) for name in probe.get("running_models") or []][:50],
             skills_loaded=len(self.skills.names()),
             active_sessions=sessions.count,
             tools=len(self.registry.names()),
@@ -611,6 +615,34 @@ def _register_routes(app: FastAPI) -> None:
             binary=binary,
             language=_language_of(target),
         )
+
+    @app.post(
+        "/ollama/warmup",
+        response_model=ModelMemoryResponse,
+        summary="Preload the model into Ollama memory (honours keep_alive)",
+    )
+    async def warmup_model(
+        container: ContainerDep,
+        model: str | None = None,
+        keep_alive: str | None = None,
+    ) -> ModelMemoryResponse:
+        """Load the model before the first chat and optionally keep it resident.
+
+        ``keep_alive`` accepts Ollama's forms: ``"30m"``, ``3600``, ``"-1"``
+        (never unload) or ``"0"`` (unload).  Omitted values fall back to
+        ``NOUR_CODE_KEEP_ALIVE`` and then to Ollama's own five-minute default.
+        """
+        state = await container.client.load_model(model=model, keep_alive=keep_alive)
+        return ModelMemoryResponse(action="warmup", **state)
+
+    @app.post(
+        "/ollama/unload",
+        response_model=ModelMemoryResponse,
+        summary="Unload the model from Ollama memory",
+    )
+    async def unload_model(container: ContainerDep, model: str | None = None) -> ModelMemoryResponse:
+        state = await container.client.unload_model(model=model)
+        return ModelMemoryResponse(action="unload", **state)
 
     @app.get("/health", response_model=HealthResponse, summary="Ollama + model health")
     async def health(container: ContainerDep) -> HealthResponse:

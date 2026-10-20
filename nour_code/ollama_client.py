@@ -229,7 +229,9 @@ class OllamaClient:
             return OllamaResponseError(f"Ollama returned invalid JSON: {exc}")
         return OllamaError(f"{exc.__class__.__name__}: {exc}")
 
-    async def _post_with_retry(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post_with_retry(
+        self, url: str, payload: dict[str, Any], *, track_metrics: bool = True
+    ) -> dict[str, Any]:
         attempts = max(1, self.settings.max_model_retries + 1)
         last: OllamaError | None = None
         for attempt in range(1, attempts + 1):
@@ -240,7 +242,7 @@ class OllamaClient:
                 data = response.json()
                 if not isinstance(data, dict):
                     raise OllamaResponseError("expected a JSON object from Ollama")
-                if self.metrics:
+                if self.metrics and track_metrics:
                     self.metrics.observe_model(
                         model=payload.get("model", self.settings.model),
                         latency_s=time.perf_counter() - started,
@@ -252,7 +254,7 @@ class OllamaClient:
             except Exception as exc:  # narrowed immediately below
                 last = self._to_error(exc, endpoint=url)
                 if isinstance(last, OllamaHTTPError | OllamaResponseError):
-                    if self.metrics:
+                    if self.metrics and track_metrics:
                         self.metrics.observe_model(
                             model=self.settings.model,
                             latency_s=time.perf_counter() - started,
@@ -267,7 +269,7 @@ class OllamaClient:
                 if attempt < attempts:
                     await asyncio.sleep(self.settings.retry_backoff_seconds * attempt)
         assert last is not None
-        if self.metrics:
+        if self.metrics and track_metrics:
             self.metrics.observe_model(
                 model=self.settings.model, latency_s=0.0, prompt_tokens=0, completion_tokens=0, outcome="error"
             )
@@ -491,15 +493,115 @@ class OllamaClient:
             usage = self._parse_usage(chunk) if (chunk.get("usage") or chunk.get("eval_count")) else None
             yield StreamChunk(kind="usage", finish_reason=finish, usage=usage)
 
+    # -- model residency ---------------------------------------------------
+    async def ps(self, model: str | None = None) -> dict[str, Any]:
+        """List the models Ollama holds in memory (native ``GET /api/ps``).
+
+        Ollama loads a model on demand and unloads it again after ``keep_alive``
+        (five minutes by default), so an empty answer here does **not** mean the
+        model is missing — use :meth:`health` for the *pulled* check and this
+        method for the *resident* check.
+        """
+        url = self.settings.native_ps_url
+        timeout = httpx.Timeout(self.settings.health_timeout_seconds, connect=self.settings.connect_timeout_seconds)
+        try:
+            response = await self._client.get(url, timeout=timeout)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:  # narrowed by _to_error
+            raise self._to_error(exc, endpoint=url) from exc
+
+        models: list[dict[str, Any]] = []
+        for item in (payload or {}).get("models", []) if isinstance(payload, dict) else []:
+            name = item.get("name") or item.get("model")
+            if not name:
+                continue
+            models.append(
+                {
+                    "name": str(name),
+                    "expires_at": item.get("expires_at"),
+                    "size": int(item.get("size") or 0),
+                    "size_vram": int(item.get("size_vram") or 0),
+                }
+            )
+        target = model or self.settings.model
+        match = next((entry for entry in models if self._same_model(entry["name"], target)), None)
+        return {
+            "model": target,
+            "running": match is not None,
+            "expires_at": (match or {}).get("expires_at"),
+            "models": models,
+        }
+
+    async def load_model(self, *, model: str | None = None, keep_alive: str | None = None) -> dict[str, Any]:
+        """Preload a model through the native API and report its residency.
+
+        ``/api/generate`` with no prompt only loads the weights, which is the
+        documented way to control residency.  Ollama's OpenAI-compatible
+        ``/v1/chat/completions`` endpoint ignores ``keep_alive``, so warm-up
+        must go through the native endpoint.
+        """
+        target = model or self.settings.model
+        chosen = keep_alive if keep_alive is not None else self.settings.keep_alive
+        payload: dict[str, Any] = {"model": target, "stream": False}
+        if chosen is not None:
+            payload["keep_alive"] = chosen
+        await self._post_with_retry(self.settings.native_generate_url, payload, track_metrics=False)
+        return await self._residency(target, keep_alive=chosen)
+
+    async def unload_model(self, *, model: str | None = None) -> dict[str, Any]:
+        """Unload a model (``keep_alive: 0``) and report its residency."""
+        target = model or self.settings.model
+        payload = {"model": target, "stream": False, "keep_alive": 0}
+        await self._post_with_retry(self.settings.native_generate_url, payload, track_metrics=False)
+        return await self._residency(target, keep_alive="0")
+
+    async def _residency(self, model: str, *, keep_alive: str | None) -> dict[str, Any]:
+        try:
+            state = await self.ps(model)
+        except OllamaError as exc:
+            return {
+                "model": model,
+                "keep_alive": keep_alive,
+                "running": False,
+                "expires_at": None,
+                "detail": f"model list probe failed: {exc}",
+            }
+        return {
+            "model": model,
+            "keep_alive": keep_alive,
+            "running": bool(state["running"]),
+            "expires_at": state["expires_at"],
+            "detail": None,
+        }
+
+    @staticmethod
+    def _same_model(name: str, model: str) -> bool:
+        """Strict match for *running* models (unlike the tolerant family check).
+
+        ``qwen3`` matches ``qwen3:8b`` because one side carries no tag, but
+        ``qwen3:8b`` does not match ``qwen3:14b``: those are different weights.
+        """
+        if name == model:
+            return True
+        name_family, _, name_tag = name.partition(":")
+        model_family, _, model_tag = model.partition(":")
+        if name_family != model_family:
+            return False
+        return not name_tag or not model_tag
+
     # -- health ------------------------------------------------------------
     async def health(self) -> dict[str, Any]:
-        """Probe Ollama: version, reachable models and whether our model is pulled."""
+        """Probe Ollama: version, pulled models, and which of them are resident."""
         info: dict[str, Any] = {
             "reachable": False,
             "url": self.settings.ollama_base_url,
             "version": None,
             "models": [],
             "model_loaded": False,
+            "model_running": False,
+            "model_expires_at": None,
+            "running_models": [],
             "detail": None,
         }
         timeout = httpx.Timeout(self.settings.health_timeout_seconds, connect=self.settings.connect_timeout_seconds)
@@ -531,6 +633,17 @@ class OllamaClient:
                 )
         except Exception as exc:
             info["detail"] = f"model list probe failed: {exc}"
+
+        # Second, different question: which models does Ollama hold in memory
+        # right now?  A model can be pulled (``/api/tags``) and idle (absent
+        # from ``/api/ps``) at the same time - that is the normal state.
+        try:
+            state = await self.ps()
+            info["running_models"] = [entry["name"] for entry in state["models"]]
+            info["model_running"] = bool(state["running"])
+            info["model_expires_at"] = state["expires_at"]
+        except Exception as exc:  # the residency probe must never fail /health
+            logger.info("ollama running-model probe failed: %s", exc)
         return info
 
     @staticmethod

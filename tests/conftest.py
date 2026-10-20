@@ -76,6 +76,9 @@ class FakeModel:
             "version": "0.0.0-test",
             "models": ["qwen3:8b"],
             "model_loaded": True,
+            "model_running": True,
+            "model_expires_at": "2026-01-01T00:05:00Z",
+            "running_models": ["qwen3:8b"],
             "detail": None,
         }
 
@@ -167,6 +170,24 @@ class FakeModel:
 
     async def health(self) -> dict[str, Any]:
         return dict(self.health_payload)
+
+    async def load_model(self, *, model: str | None = None, keep_alive: Any = None) -> dict[str, Any]:
+        return {
+            "model": model or "qwen3:8b",
+            "keep_alive": keep_alive,
+            "running": True,
+            "expires_at": "2026-01-01T00:05:00Z",
+            "detail": None,
+        }
+
+    async def unload_model(self, *, model: str | None = None) -> dict[str, Any]:
+        return {
+            "model": model or "qwen3:8b",
+            "keep_alive": "0",
+            "running": False,
+            "expires_at": None,
+            "detail": None,
+        }
 
     async def aclose(self) -> None:
         return None
