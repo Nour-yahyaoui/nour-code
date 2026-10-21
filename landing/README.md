@@ -54,6 +54,7 @@ design system, keeping the behaviour intact.
 | offline banner | `src/components/OfflineBanner.tsx` + `useOnline.ts` | explains that the page itself is static, so almost nothing changes offline |
 | error boundary per section | `src/components/ErrorBoundary.tsx` | one broken widget cannot blank the page |
 | reduced motion + honest states | `TerminalDemo`, `Reveal`, `global.css` | the animation is a still image and content is visible without motion |
+| disclosure menu + `aria-current` | `src/components/NavMenu.tsx` | seven sections without a wall of header text: Escape, a click outside, a chosen link or a tab-out all close it, and the section on screen is marked |
 
 Patterns from the skill that are intentionally **not** used: `useAsync` timeouts,
 retry and stale guards (nothing is fetched any more), `useDraft`, optimistic

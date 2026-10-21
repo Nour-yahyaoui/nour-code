@@ -1,12 +1,4 @@
-const LINKS = [
-  { href: "#console", label: "Console" },
-  { href: "#features", label: "Features" },
-  { href: "#architecture", label: "Architecture" },
-  { href: "#start", label: "Quick start" },
-  { href: "#api", label: "API" },
-  { href: "#security", label: "Security" },
-  { href: "#faq", label: "FAQ" },
-];
+import { NavMenu } from "./NavMenu";
 
 export function Nav() {
   return (
@@ -19,14 +11,6 @@ export function Nav() {
           </span>
         </a>
 
-        <nav className="nav__links" aria-label="Sections">
-          {LINKS.map((link) => (
-            <a key={link.href} href={link.href}>
-              {link.label}
-            </a>
-          ))}
-        </nav>
-
         <div className="nav__actions">
           <a
             className="nav__version"
@@ -38,7 +22,7 @@ export function Nav() {
             v1.4
           </a>
           <a
-            className="btn btn--ghost btn--sm"
+            className="btn btn--ghost btn--sm nav__source"
             href="https://github.com/Nour-yahyaoui/nour-code"
             target="_blank"
             rel="noreferrer noopener"
@@ -51,6 +35,8 @@ export function Nav() {
               />
             </svg>
           </a>
+
+          <NavMenu />
         </div>
       </div>
     </header>
