@@ -5,6 +5,18 @@ semantic versioning: `MAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+### Changed — the landing header is one menu
+
+Seven inline links, a version pill and a Source button made the header a wall of
+small text. Those links now live behind a **Menu** button that opens a panel
+listing every section with its eyebrow as a hint, and marks the one on screen
+(`aria-current="location"`) as you scroll.
+
+The panel closes on Escape (focus returns to the button), on a click outside, on
+choosing a link, and when focus leaves the menu. Under 620 px the header keeps
+only the brand and the menu, and the Source and release links move into the
+panel's footer so nothing is hidden behind a breakpoint.
+
 ## [1.4.0] — 2026-10-20 · a turn can no longer hang
 
 The console now shows what the agent is doing, and an approval nobody answers

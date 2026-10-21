@@ -427,27 +427,11 @@ pre {
   color: var(--dimmer);
 }
 
-.nav__links {
-  display: flex;
-  gap: 22px;
-  margin-left: auto;
-  font-size: 0.88rem;
-  color: var(--dim);
-}
-
-.nav__links a {
-  padding-block: 6px;
-  transition: color 0.15s ease;
-}
-
-.nav__links a:hover {
-  color: var(--text);
-}
-
 .nav__actions {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  margin-left: auto;
 }
 
 .nav__version {
@@ -457,6 +441,187 @@ pre {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 3px 9px;
+}
+
+/* --------------------------------------------------------------------------
+   menu — the section links, behind one button
+   -------------------------------------------------------------------------- */
+.menu {
+  position: relative;
+}
+
+.menu__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.menu__button:hover,
+.menu__button[aria-expanded="true"] {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* three bars that fold into an X */
+.menu__bars {
+  display: grid;
+  gap: 3px;
+  width: 14px;
+}
+
+.menu__bars i {
+  display: block;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+.menu__button[aria-expanded="true"] .menu__bars i:nth-child(1) {
+  transform: translateY(4.5px) rotate(45deg);
+}
+
+.menu__button[aria-expanded="true"] .menu__bars i:nth-child(2) {
+  opacity: 0;
+}
+
+.menu__button[aria-expanded="true"] .menu__bars i:nth-child(3) {
+  transform: translateY(-4.5px) rotate(-45deg);
+}
+
+.menu__panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 60;
+  width: min(430px, calc(100vw - 2 * var(--gutter)));
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: 0 24px 60px -14px rgba(0, 0, 0, 0.8), 0 2px 10px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-8px) scale(0.99);
+  transform-origin: top right;
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0s linear 0.16s;
+}
+
+.menu__panel.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0s;
+}
+
+.menu__eyebrow {
+  padding: 5px 9px 9px;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+}
+
+.menu__list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu__list a {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto 6px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.menu__list a:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.menu__list a[aria-current="location"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.menu__index {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--dimmer);
+}
+
+.menu__item {
+  font-size: 0.92rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.menu__hint {
+  max-width: 190px;
+  overflow: hidden;
+  font-size: 0.76rem;
+  color: var(--dimmer);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+}
+
+.menu__list a[aria-current="location"] .menu__dot {
+  opacity: 1;
+}
+
+.menu__foot {
+  display: none;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.menu__foot a {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+  color: var(--dim);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.menu__foot a:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 
 /* --------------------------------------------------------------------------
@@ -2034,28 +2199,12 @@ pre {
 
 @media (max-width: 760px) {
   .nav__inner {
-    gap: 12px 16px;
-    flex-wrap: wrap;
-    padding-block: 12px 0;
-  }
-
-  .nav__links {
-    order: 3;
-    flex-basis: 100%;
-    margin-left: 0;
-    gap: 18px;
-    overflow-x: auto;
-    padding-block: 2px 12px;
-    font-size: 0.82rem;
-    scrollbar-width: none;
-  }
-
-  .nav__links::-webkit-scrollbar {
-    display: none;
+    min-height: 60px;
+    gap: 12px;
   }
 
   .nav__actions {
-    margin-left: auto;
+    gap: 8px;
   }
 
   .section__head--split {
@@ -2161,15 +2310,40 @@ pre {
   }
 }
 
+@media (max-width: 620px) {
+  /* One button in the header; its menu carries the links that were here. */
+  .nav__version,
+  .nav__source {
+    display: none;
+  }
+
+  .menu__foot {
+    display: flex;
+  }
+
+  .menu__hint {
+    display: none;
+  }
+
+  .menu__list a {
+    grid-template-columns: 22px minmax(0, 1fr) 6px;
+    padding-block: 11px;
+  }
+
+  /* the only header control left on a phone, so it gets a real target */
+  .menu__button {
+    min-height: 44px;
+  }
+}
+
 @media (max-width: 420px) {
   .brand__word {
     font-size: 0.94rem;
   }
 
-  .nav__version {
-    display: none;
+  .menu__button {
+    padding-inline: 12px;
   }
-
 }
 
 /* --------------------------------------------------------------------------
