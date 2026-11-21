@@ -6,6 +6,7 @@ it *controlled* access to your filesystem, your shell and an extensible set of
 Python **skills**. Nothing leaves your machine except the traffic you explicitly
 allow.
 
+
 ```
 ┌────────────┐   SSE    ┌──────────────────┐  OpenAI-compatible  ┌──────────────┐
 │  client    │◀────────▶│  nour-code       │◀──────────────────▶│  Ollama      │
