@@ -5,6 +5,14 @@ semantic versioning: `MAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+### Fixed — the test command CI runs
+
+`pytest tests -q`, the exact command in `.github/workflows/ci.yml`, died during
+collection with `ModuleNotFoundError: No module named 'nour_code'`: the bare
+console script does not put the working directory on `sys.path`. `pytest.ini`
+now sets `pythonpath = .` (mirrored in `pyproject.toml`) and CI calls
+`python -m pytest`, which works either way. Both forms pass locally again.
+
 ### Changed — the landing header is one menu
 
 Seven inline links, a version pill and a Source button made the header a wall of
