@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cart / 2050</title>
+<style>
+/* ---------------------------------------------------------------------------
+   One file, no build step, no external request.
+
+   The layout is a field rather than a dashboard: a soft horizon, a cart that
+   floats, and a total that is the loudest object on screen because it is the
+   only number that matters. Every value comes from /cart — nothing is invented.
+   --------------------------------------------------------------------------- */
+:root {
+  --void: #05070c;
+  --ink: #e9f0ff;
+  --dim: #8b97ad;
+  --glass: rgba(255, 255, 255, 0.045);
+  --glass-line: rgba(160, 200, 255, 0.14);
+  --ion: #7cf8d4;      /* the accent: cold, alive */
+  --plasma: #b79bff;
+  --warn: #ffc46b;
+  --danger: #ff8f8f;
+  --r: 22px;
+  --sat: 0;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--void);
+  color: var(--ink);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+  --glow-x: 50%;
+  --glow-y: 30%;
+}
+/* the horizon: two soft fields that drift, never distracting */
+.field {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(60vmax 60vmax at var(--glow-x) var(--glow-y), rgba(124, 248, 212, 0.13), transparent 60%),
+    radial-gradient(50vmax 40vmax at 85% 110%, rgba(183, 155, 255, 0.14), transparent 65%),
+    var(--void);
+  transition: background-position 0.2s linear;
+}
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.18;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  pointer-events: none;
+  mix-blend-mode: soft-light;
+}
+.wrap {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: clamp(18px, 4vw, 40px);
+  gap: clamp(20px, 4vw, 40px);
+  max-width: 1180px;
+  margin: 0 auto;
+}
+header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.mark {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--ion);
+}
+.mark::before { content: "◆ "; color: var(--plasma); }
+h1 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3.4vw, 2.3rem);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+h1 em { font-style: normal; color: var(--dim); }
+.clock { margin-left: auto; font-family: ui-monospace, monospace; font-size: 0.74rem; color: var(--dim); }
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: clamp(18px, 3vw, 32px);
+  align-items: start;
+}
+.card {
+  border: 1px solid var(--glass-line);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  border-radius: var(--r);
+  padding: clamp(18px, 3vw, 28px);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+.card h2 {
+  margin: 0 0 18px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+/* --- the entry field ------------------------------------------------------ */
+form { display: grid; grid-template-columns: 1fr 92px 1fr; gap: 10px; }
+label { display: block; font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  background: rgba(4, 8, 16, 0.55);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.95rem;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+input:focus {
+  outline: none;
+  border-color: var(--ion);
+  box-shadow: 0 0 0 3px rgba(124, 248, 212, 0.18);
+}
+button {
+  align-self: end;
+  padding: 12px 18px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: linear-gradient(120deg, var(--ion), #59e0ff);
+  color: #04121a;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+button:hover { filter: brightness(1.08); }
+button:active { transform: translateY(1px); }
+button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.hint { margin: 14px 0 0; font-size: 0.78rem; color: var(--dim); }
+kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-line);
+  background: rgba(255, 255, 255, 0.05);
+}
+@media (max-width: 620px) { form { grid-template-columns: 1fr 84px; } form button { grid-column: 1 / -1; } }
+
+/* --- the total: the loudest object on screen ----------------------------- */
+.total-card { display: grid; gap: 10px; align-content: start; }
+.total {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(2.6rem, 8vw, 4.6rem);
+  font-weight: 300;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 60px rgba(124, 248, 212, 0.22);
+  transition: color 0.2s ease;
+}
+.total[data-state="busy"] { color: var(--dim); }
+.total small { font-size: 0.28em; letter-spacing: 0.2em; color: var(--dim); margin-left: 0.5em; vertical-align: super; }
+.meta { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.74rem; color: var(--dim); font-family: ui-monospace, monospace; }
+
+/* --- the cart: rows, not a table ----------------------------------------- */
+.rows { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 2px; }
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 14px;
+  align-items: baseline;
+  padding: 12px 2px;
+  border-bottom: 1px solid rgba(160, 200, 255, 0.09);
+  animation: arrive 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.row:last-child { border-bottom: 0; }
+.row__sku { font-family: ui-monospace, monospace; font-size: 0.86rem; }
+.row__qty { color: var(--dim); font-size: 0.8rem; font-family: ui-monospace, monospace; }
+.row__amt { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+@keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.empty { color: var(--dim); font-size: 0.9rem; padding: 18px 2px; }
+.status { min-height: 1.2em; font-size: 0.78rem; color: var(--dim); font-family: ui-monospace, monospace; }
+.status[data-tone="bad"] { color: var(--danger); }
+.status[data-tone="good"] { color: var(--ion); }
+footer { display: flex; gap: 16px; flex-wrap: wrap; color: var(--dim); font-size: 0.74rem; font-family: ui-monospace, monospace; }
+footer span { white-space: nowrap; }
+@media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+/* the page has to be usable without the drift, and without a mouse */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+  .field { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="field" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="wrap">
+  <header>
+    <span class="mark">cart</span>
+    <h1>one cart, <em>nothing else</em></h1>
+    <span class="clock" id="clock" aria-hidden="true">--:--:--</span>
+  </header>
+
+  <main>
+    <section class="card" aria-labelledby="add-h">
+      <h2 id="add-h">add an item</h2>
+      <form id="add-form" novalidate>
+        <div>
+          <label for="sku">sku</label>
+          <input id="sku" name="sku" required autocomplete="off" spellcheck="false" placeholder="AURORA-01">
+        </div>
+        <div>
+          <label for="qty">qty</label>
+          <input id="qty" name="qty" type="number" min="1" step="1" value="1" inputmode="numeric">
+        </div>
+        <div>
+          <label for="price">unit price</label>
+          <div style="display:flex;gap:8px">
+            <input id="price" name="price" required inputmode="decimal" autocomplete="off" placeholder="0.00">
+            <button type="submit" id="add">add</button>
+          </div>
+        </div>
+      </form>
+      <p class="hint">press <kbd>enter</kbd> to add · <kbd>tab</kbd> moves through the fields · the server does the arithmetic</p>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="card total-card" aria-labelledby="total-h">
+      <h2 id="total-h">total</h2>
+      <div class="total" id="total" data-state="idle" aria-live="polite">—<small id="unit">usd</small></div>
+      <div class="meta">
+        <span id="count">0 items</span>
+        <span id="checked">not checked yet</span>
+      </div>
+      <ul class="rows" id="rows" aria-labelledby="total-h"></ul>
+      <p class="empty" id="empty">the cart is empty — add something to see it appear here.</p>
+    </section>
+  </main>
+
+  <footer>
+    <span>source: <code>GET /cart</code></span>
+    <span>no tracking</span>
+    <span>works offline</span>
+    <span id="stamp">—</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const form = document.getElementById("add-form");
+  const sku = document.getElementById("sku");
+  const qty = document.getElementById("qty");
+  const price = document.getElementById("price");
+  const total = document.getElementById("total");
+  const unit = document.getElementById("unit");
+  const rows = document.getElementById("rows");
+  const empty = document.getElementById("empty");
+  const count = document.getElementById("count");
+  const checked = document.getElementById("checked");
+  const status = document.getElementById("status");
+  const stamp = document.getElementById("stamp");
+  const clock = document.getElementById("clock");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  const money = (value) => new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(value));
+
+  function announce(message, tone) {
+    status.textContent = message;
+    status.dataset.tone = tone || "";
+    // a screen reader announces aria-live; sighted users get the same text
+  }
+
+  function renderCart(payload) {
+    const items = payload.items || [];
+    total.dataset.state = "idle";
+    total.textContent = money(payload.total);
+    const small = document.createElement("small");
+    small.id = "unit";
+    small.textContent = "usd";
+    total.appendChild(small);
+
+    rows.replaceChildren();
+    for (const item of items) {
+      const li = document.createElement("li");
+      li.className = "row";
+      const skuCell = document.createElement("span");
+      skuCell.className = "row__sku";
+      skuCell.textContent = item.sku;
+      const qtyCell = document.createElement("span");
+      qtyCell.className = "row__qty";
+      qtyCell.textContent = "×" + item.quantity;
+      const amtCell = document.createElement("span");
+      amtCell.className = "row__amt";
+      amtCell.textContent = money(Number(item.price) * item.quantity);
+      li.append(skuCell, qtyCell, amtCell);
+      rows.appendChild(li);
+    }
+
+    empty.hidden = items.length > 0;
+    count.textContent = items.length + (items.length === 1 ? " item" : " items");
+    checked.textContent = "checked " + new Date().toLocaleTimeString();
+    stamp.textContent = "synced " + new Date().toLocaleTimeString();
+  }
+
+  async function load() {
+    total.dataset.state = "busy";
+    try {
+      const response = await fetch("/cart", { headers: { accept: "application/json" } });
+      if (!response.ok) throw new Error("GET /cart -> " + response.status);
+      renderCart(await response.json());
+    } catch (error) {
+      total.dataset.state = "idle";
+      total.textContent = "—";
+      announce("the cart could not be read: " + error.message, "bad");
+    }
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = {
+      sku: sku.value.trim(),
+      price: price.value.trim(),
+      quantity: Number(qty.value || 1)
+    };
+    if (!body.sku || !body.price) {
+      announce("a sku and a price are both required", "bad");
+      (body.sku ? price : sku).focus();
+      return;
+    }
+    total.dataset.state = "busy";
+    try {
+      const response = await fetch("/cart", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || ("POST /cart -> " + response.status));
+      announce("added " + payload.item.sku, "good");
+      form.reset();
+      qty.value = "1";
+      sku.focus();
+      await load();
+    } catch (error) {
+      total.dataset.state = "idle";
+      announce("could not add: " + error.message, "bad");
+    }
+  });
+
+  // the horizon leans toward the pointer — unless motion is unwanted
+  window.addEventListener("pointermove", (event) => {
+    if (reduce.matches) return;
+    const x = (event.clientX / window.innerWidth) * 100;
+    const y = (event.clientY / window.innerHeight) * 100;
+    document.body.style.setProperty("--glow-x", x + "%");
+    document.body.style.setProperty("--glow-y", y + "%");
+  }, { passive: true });
+
+  function tick() {
+    clock.textContent = new Date().toLocaleTimeString();
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // Static snapshot: fetched from a live server, inlined so this copy works
+  // from a file:// viewer. Everything else on the page is unchanged.
+  const SNAPSHOT = {"items": [{"sku": "AURORA-01", "price": "240.00", "quantity": 2}, {"sku": "LATTICE-9", "price": "118.50", "quantity": 1}], "total": "598.50"};
+  total.dataset.state = "idle";
+  renderCart(SNAPSHOT);
+  announce("static snapshot — served from a local run", "good");
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    announce("this copy is a snapshot; run demo/workspaces/shop to add items", "bad");
+  });
+
+})();
+</script>
+</body>
+</html>

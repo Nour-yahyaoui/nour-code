@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# Permissions for the demo only.
+#
+# Same shape as the repository's permissions.yaml, narrowed to one thing: the
+# scratch workspace the demo writes into. Nothing here reaches a real project.
+# ---------------------------------------------------------------------------
+version: 1
+
+allowed_roots:
+  - /home/user/nour-code/demo/workspaces/shop
+
+filesystem:
+  max_read_bytes: 1000000
+  max_write_bytes: 2000000
+  denied_globs:
+    - "**/.ssh/id_rsa"
+    - "**/.ssh/id_ed25519"
+    - "**/*.pem"
+    - "**/.env"
+  ignore_dirs:
+    - .git
+    - node_modules
+    - __pycache__
+    - .venv
+    - .pytest_cache
+
+shell:
+  # `pytest` has to be here, or the agent cannot test what it writes — and the
+  # honest thing for it to do then is refuse to edit anything at all.
+  allowed_commands: [pytest, python, python3, git]
+  denied_patterns:
+    - "rm -rf"
+    - "del /f /s /q C:"
+  default_timeout_seconds: 60
+  max_timeout_seconds: 600
+
+network:
+  allow_outbound: false
+
+tools:
+  delete_file: false
+  run_shell: true
+  read_file: true
+  write_file: true
+  list_directory: true
+  search_files: true
+  apply_patch: true

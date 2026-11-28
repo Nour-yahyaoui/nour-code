@@ -5,6 +5,15 @@ semantic versioning: `MAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+### Fixed — verification ran pytest in a mode that hides its own result
+
+`verify` ran the project's checks as `python -m pytest -q`. On a TTY that is
+fine; through `run_shell` it is a pipe, and in a pipe `-q` prints only the
+progress dots — no "9 passed", no failure summary. The model was handed a
+verification result it could not read, so it inferred pass/fail from whatever
+else it happened to see. Verification now uses `-v`, which prints the summary
+and the test names whether or not anyone is watching.
+
 ### Fixed — the test command CI runs
 
 `pytest tests -q`, the exact command in `.github/workflows/ci.yml`, died during

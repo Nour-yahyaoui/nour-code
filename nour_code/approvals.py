@@ -43,13 +43,20 @@ class ApprovalDecision(str):
 
     proposal_id: str | None
     auto: bool
+    note: str | None
 
     def __new__(
-        cls, value: str, *, proposal_id: str | None = None, auto: bool = False
+        cls,
+        value: str,
+        *,
+        proposal_id: str | None = None,
+        auto: bool = False,
+        note: str | None = None,
     ) -> ApprovalDecision:
         instance = super().__new__(cls, value)
         instance.proposal_id = proposal_id
         instance.auto = auto
+        instance.note = note
         return instance
 
     @property
@@ -120,6 +127,8 @@ class ApprovalGate:
         self.timeout_seconds = timeout_seconds
         self._emit = emit
         self._pending: dict[str, tuple[Proposal, asyncio.Future[str]]] = {}
+        #: proposal id -> the user's own words, kept until the future resolves
+        self._notes: dict[str, str] = {}
         self.auto_approve = False
         self.history: list[dict[str, Any]] = []
 
@@ -183,28 +192,39 @@ class ApprovalGate:
             raise
         finally:
             self._pending.pop(proposal.id, None)
+            note = self._notes.pop(proposal.id, None)
 
-        self.history.append({"tool": tool, "decision": decision, "auto": False})
+        row = {"tool": tool, "decision": decision, "auto": False}
+        if note:
+            row["note"] = note
+        self.history.append(row)
         logger.info(
             "proposal %s (%s) -> %s", proposal.id, tool, decision, extra={"session_id": self.session_id}
         )
-        return ApprovalDecision(decision, proposal_id=proposal.id)
+        return ApprovalDecision(decision, proposal_id=proposal.id, note=note)
 
     # -- resolution --------------------------------------------------------
-    def resolve(self, proposal_id: str, decision: str) -> bool:
-        """Resolve a parked proposal. Returns False when nothing was pending."""
+    def resolve(self, proposal_id: str, decision: str, note: str | None = None) -> bool:
+        """Resolve a parked proposal. Returns False when nothing was pending.
+
+        ``note`` is the user's reason, in their own words. The model is told it
+        verbatim, which is the difference between "rejected" and "rejected
+        because…" — the second one it can act on.
+        """
         entry = self._pending.get(proposal_id)
         if entry is None:
             return False
+        if note:
+            self._notes[proposal_id] = note
         _proposal, future = entry
         if not future.done():
             future.set_result(decision)
         return True
 
-    def resolve_all(self, decision: str) -> int:
+    def resolve_all(self, decision: str, note: str | None = None) -> int:
         count = 0
         for proposal_id in list(self._pending):
-            count += int(self.resolve(proposal_id, decision))
+            count += int(self.resolve(proposal_id, decision, note))
         return count
 
     def cancel(self) -> int:

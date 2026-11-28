@@ -512,7 +512,9 @@ def _register_routes(app: FastAPI) -> None:
         decision = payload.decision
         if decision in {"approve_all", "reject_all"}:
             gate.auto_approve = decision == "approve_all"
-            resolved = gate.resolve_all("approved" if decision == "approve_all" else "rejected")
+            resolved = gate.resolve_all(
+                "approved" if decision == "approve_all" else "rejected", payload.note
+            )
             return ApprovalResponse(
                 ok=True,
                 session_id=session_id,
@@ -524,7 +526,9 @@ def _register_routes(app: FastAPI) -> None:
 
         if not payload.proposal_id:
             raise HTTPException(status_code=400, detail="proposal_id is required for a single decision")
-        resolved_ok = gate.resolve(payload.proposal_id, "approved" if decision == "approve" else "rejected")
+        resolved_ok = gate.resolve(
+                payload.proposal_id, "approved" if decision == "approve" else "rejected", payload.note
+            )
         if not resolved_ok:
             raise HTTPException(status_code=404, detail=f"proposal {payload.proposal_id!r} is not pending")
         return ApprovalResponse(
