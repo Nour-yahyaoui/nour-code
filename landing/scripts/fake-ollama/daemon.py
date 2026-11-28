@@ -65,18 +65,24 @@ class ShopScenario:
     name = "shop"
 
     def __init__(self, fixture: pathlib.Path) -> None:
-        self.broken = (fixture / "shop" / "app.py").read_text()
-        self.fixed = self.broken.replace('i["unit_price"]', 'i["price"]')
-        if self.fixed == self.broken:
-            raise SystemExit('fixture bug is missing: expected i["unit_price"] in app.py')
-        # The page is written to the workspace root, one level above the
-        # package, so a handler that looks next to app.py cannot find it.
-        self.served = self.fixed.replace(
-            '.parent.parent.joinpath("ui-2050.html")',
-            '.with_name("ui-2050.html")',
-        )
-        if self.served == self.fixed:
-            raise SystemExit("fixture bug is missing: expected the page path in app.py")
+        source = (fixture / "shop" / "app.py").read_text()
+        # The fixture holds the *good* code; the scenario derives the three
+        # states the story needs, in this order:
+        #   broken -> sums a field that does not exist, serves the page wrongly
+        #   fixed  -> sums correctly, still serves the page wrongly
+        #   served -> sums correctly and serves the page from the workspace root
+        right = '.parent.parent.joinpath("ui-2050.html")'
+        wrong = '.with_name("ui-2050.html")'
+        if right not in source:
+            raise SystemExit(f"fixture is missing the page handler: expected {right} in app.py")
+        if 'i["price"] * i["quantity"]' not in source:
+            raise SystemExit('fixture is missing the good sum: expected i["price"] * i["quantity"]')
+        self.served = source
+        self.fixed = source.replace(right, wrong)
+        self.broken = self.fixed.replace('i["price"] * i["quantity"]', 'i["unit_price"] * i["quantity"]', 1)
+        if self.broken == self.fixed:
+            raise SystemExit('fixture bug is missing: expected i["price"] * i["quantity"] in app.py')
+
         self.test_app = (fixture / "shop" / "test_app.py").read_text()
         self.test_ui = (fixture / "shop" / "test_ui.py").read_text()
         self.test_serve = (fixture / "shop" / "test_serve.py").read_text()

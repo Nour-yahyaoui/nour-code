@@ -35,7 +35,7 @@ HERE = Path(__file__).resolve().parent
 TRANSCRIPT = HERE / "transcript.md"
 EVENTS = HERE / "events.jsonl"
 APP = HERE / "workspaces" / "shop" / "shop" / "app.py"
-BUG = 'i["unit_price"] * i["quantity"]'
+SOURCE = APP.read_text()
 BASE = "http://127.0.0.1:8001"
 
 
@@ -200,13 +200,10 @@ def main() -> int:
     parser.add_argument("--ui-prompt", default=UI_PROMPT)
     args = parser.parse_args()
 
-    # Turn 1 only makes sense on the broken fixture: put the bug back.
+    # The fixture on disk holds the *good* code (the fake model derives the
+    # broken states from it), so every run starts by writing it back.
     if args.only in {"turn1", "both", "all"}:
-        text = APP.read_text()
-        if BUG not in text:
-            APP.write_text(
-                text.replace('i["price"] * i["quantity"]', BUG, 1)
-            )
+        APP.write_text(SOURCE)
 
     user = User(args.base, Path(args.out))
     health = user.get("/health")
