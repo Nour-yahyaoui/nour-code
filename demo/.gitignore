@@ -1,0 +1,6 @@
+sessions.json
+logs/
+transcript.md
+events.jsonl
+__pycache__/
+.pytest_cache/
