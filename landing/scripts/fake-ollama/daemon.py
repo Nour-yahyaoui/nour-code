@@ -72,8 +72,8 @@ class ShopScenario:
         # The page is written to the workspace root, one level above the
         # package, so a handler that looks next to app.py cannot find it.
         self.served = self.fixed.replace(
-            "pathlib.Path(__file__).parent.parent.joinpath(\"ui-2050.html\")",
-            'pathlib.Path(__file__).with_name("ui-2050.html")',
+            '.parent.parent.joinpath("ui-2050.html")',
+            '.with_name("ui-2050.html")',
         )
         if self.served == self.fixed:
             raise SystemExit("fixture bug is missing: expected the page path in app.py")
@@ -170,7 +170,7 @@ class ShopScenario:
                 calls=[
                     (
                         "run_shell",
-                        {"command": "pytest shop/test_ui.py shop/test_app.py -q", "timeout_seconds": 120},
+                        {"command": "pytest shop/test_ui.py shop/test_app.py -v", "timeout_seconds": 120},
                     )
                 ],
             )
@@ -194,7 +194,7 @@ class ShopScenario:
             log("probe written — running it")
             return Turn(
                 thinking="The probe exists; run it. A failing test is evidence, not an opinion.",
-                calls=[("run_shell", {"command": "pytest shop/test_serve.py -q", "timeout_seconds": 120})],
+                calls=[("run_shell", {"command": "pytest shop/test_serve.py -v", "timeout_seconds": 120})],
             )
 
         if self.stage == "serve_red" and tail["ran_tests"]:
@@ -234,7 +234,7 @@ class ShopScenario:
                     (
                         "run_shell",
                         {
-                            "command": "pytest shop/test_serve.py shop/test_app.py shop/test_ui.py -q",
+                            "command": "pytest shop/test_serve.py shop/test_app.py shop/test_ui.py -v",
                             "timeout_seconds": 120,
                         },
                     )
@@ -245,6 +245,7 @@ class ShopScenario:
             self.stage = "done"
             if exit_code == 0:
                 log("everything green")
+                total = self._passed(text)
                 return Turn(
                     thinking="Everything green: the cart, the page and the route to it.",
                     calls=[],
@@ -253,7 +254,9 @@ class ShopScenario:
                         "passed while `GET /` raised `FileNotFoundError` — the handler looked "
                         "next to `app.py` and the page is one level up. It now serves the page "
                         "from the workspace root, and `shop/test_serve.py` starts the server "
-                        "and fetches `/` for real. All ten tests pass."
+                        "and fetches `/` for real. "
+                        f"{total} tests pass." if total
+                        else "All suites pass."
                     ),
                 )
             return Turn(
@@ -269,14 +272,14 @@ class ShopScenario:
                 self.stage = "fixed_attempt"
                 return Turn(
                     thinking="The fix is on disk. A claim without a test run is a guess.",
-                    calls=[("run_shell", {"command": "pytest shop/test_app.py -q", "timeout_seconds": 120})],
+                    calls=[("run_shell", {"command": "pytest shop/test_app.py -v", "timeout_seconds": 120})],
                 )
             log("code written — running the suite")
             if self.stage == "new":
                 self.stage = "scaffold"
             return Turn(
                 thinking="Everything is on disk; run the tests before saying anything about them.",
-                calls=[("run_shell", {"command": "pytest shop/test_app.py -q", "timeout_seconds": 120})],
+                calls=[("run_shell", {"command": "pytest shop/test_app.py -v", "timeout_seconds": 120})],
             )
 
         # --- a read came back --------------------------------------------
@@ -293,10 +296,16 @@ class ShopScenario:
                 log("suite green")
                 if self.stage == "ui":
                     self.stage = "done"
+                    served = self._passed(text)
                     return Turn(
                         thinking="The interface tests pass as well.",
                         calls=[],
-                        say="`ui-2050.html` is served at `/`; all five interface tests pass.",
+                        say=(
+                            "`ui-2050.html` is served at `/`. The interface tests pass, and so "
+                            f"do the cart tests — {served} in total."
+                            if served
+                            else "`ui-2050.html` is served at `/`; the interface tests pass."
+                        ),
                     )
                 self.stage = "fixed"
                 return Turn(
@@ -381,6 +390,16 @@ class ShopScenario:
             "read_app": "read_file" in calls,
             "ran_tests": "run_shell" in calls,
         }
+
+    @staticmethod
+    def _passed(text: str) -> int | None:
+        """How many tests pytest says passed — read from its own summary line.
+
+        Hard-coding "all ten tests pass" in the script is how a demo ends up
+        claiming a number nobody checked; the count comes from the output.
+        """
+        match = re.search(r"(\d+) passed", text)
+        return int(match.group(1)) if match else None
 
     @staticmethod
     def _exit_code(text: str) -> int | None:

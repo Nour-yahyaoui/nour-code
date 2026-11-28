@@ -19,7 +19,7 @@ class Cart:
         return item
 
     def total(self) -> Decimal:
-        return sum((i["unit_price"] * i["quantity"] for i in self._items), Decimal("0"))
+        return sum((i["price"] * i["quantity"] for i in self._items), Decimal("0"))
 
     def snapshot(self) -> list[dict]:
         return [

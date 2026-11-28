@@ -623,7 +623,7 @@ curl -s -X POST http://localhost:8000/chat/sync -H 'Content-Type: application/js
 ```
 
 `tools` filters the tool list sent to the model for that turn, `verify` runs the
-project's own checks afterwards (`python -m pytest -q`, `npm test --if-present`,
+project's own checks afterwards (`python -m pytest -v`, `npm test --if-present`,
 `cargo test`, `go test ./...` or `make test`, detected from the manifests), and
 `system_extra` is appended to the system prompt.
 

@@ -113,12 +113,16 @@ FILE_MUTATING_TOOLS = frozenset({"write_file", "apply_patch", "delete_file"})
 
 
 #: Command candidates per project marker, in priority order.
+#: Not ``-q``: on a pipe (which is how run_shell captures output) ``pytest -q``
+#: prints only the progress dots and drops the "9 passed" summary, so the model
+#: is handed a verification result it cannot read and ends up guessing whether
+#: the suite passed. ``-v`` always prints the summary and the test names.
 VERIFY_COMMANDS: tuple[tuple[str, str], ...] = (
     # `python -m pytest` also works when pytest is only installed in a venv.
-    ("pyproject.toml", "python -m pytest -q"),
-    ("pytest.ini", "python -m pytest -q"),
-    ("setup.py", "python -m pytest -q"),
-    ("requirements.txt", "python -m pytest -q"),
+    ("pyproject.toml", "python -m pytest -v"),
+    ("pytest.ini", "python -m pytest -v"),
+    ("setup.py", "python -m pytest -v"),
+    ("requirements.txt", "python -m pytest -v"),
     ("package.json", "npm test --if-present"),
     ("Cargo.toml", "cargo test"),
     ("go.mod", "go test ./..."),
