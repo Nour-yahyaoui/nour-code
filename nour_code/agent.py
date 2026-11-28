@@ -313,9 +313,17 @@ class Agent:
                     }.get(decision, decision)
                     state.approvals_rejected.append(f"{name}: {reason}")
                     result = ToolResult.denied(f"DENIED: {reason}")
-                    rendered = (
-                        f"DENIED: {reason}. Do not retry this call; either propose something else "
-                        "or explain to the user what you would do instead."
+                    human_note = str(getattr(decision, "note", "") or "").strip()
+                    rendered = f"DENIED: {reason}."
+                    if human_note:
+                        # The user's own words, verbatim. This is the difference
+                        # between "rejected" and "rejected because…" — the model
+                        # can act on the second one.
+                        rendered += f' The user said: "{human_note}".'
+                    rendered += (
+                        " Do not retry this call unchanged; either propose something that "
+                        "addresses the user's note, or explain to the user what you would do "
+                        "instead."
                     )
                     session.tool_call_count += 1
                     record = ToolCallRecord(
@@ -347,6 +355,7 @@ class Agent:
                                     "rejected": True,
                                     "timed_out": decision == "timeout",
                                     "proposal_id": proposal_id,
+                                    "note": human_note or None,
                                 },
                             )
                         )

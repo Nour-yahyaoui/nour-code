@@ -129,14 +129,14 @@ async def streaming_client(settings):
             yield client, app.state.container, fake
 
 
-async def _settle(container, decision: str, *, attempts: int = 300) -> int:
+async def _settle(container, decision: str, *, note: str | None = None, attempts: int = 300) -> int:
     """Resolve every pending proposal as soon as one appears."""
     for _ in range(attempts):
         await asyncio.sleep(0.01)
         for session_id in container.approvals.active:
             gate = container.approvals.get(session_id)
             if gate and gate.pending:
-                gate.resolve_all(decision)
+                gate.resolve_all(decision, note)
                 return len(gate.history)
     return 0
 
@@ -166,6 +166,52 @@ async def test_rejected_proposal_never_writes(streaming_client, sandbox: Path) -
     assert response.status_code == 200
     assert not (sandbox / "denied.txt").exists()
     assert "rejected" in response.text
+
+
+async def test_the_users_reason_reaches_the_model_verbatim(streaming_client, sandbox: Path) -> None:
+    """A rejection with a reason is actionable; one without is not."""
+    client, container, fake = streaming_client
+    fake.add_tool_call("write_file", path="guarded.txt", content="nope")
+    fake.add_text("stopped")
+    reason = "Not yet. Show me the diff before you overwrite app.py."
+
+    task = asyncio.create_task(_settle(container, "rejected", note=reason))
+    response = await client.post("/chat", json={"message": "write it", "approval": "mutating"})
+    await task
+
+    assert response.status_code == 200
+    assert not (sandbox / "guarded.txt").exists()
+
+    # The reason has to reach the *model*, not just the transcript: the next
+    # request carries the denial as a tool message.
+    sent = "\n".join(
+        str(m.content if hasattr(m, "content") else m.get("content"))
+        for call in fake.calls
+        for m in call["messages"]
+    )
+    assert f'The user said: "{reason}"' in sent
+    assert "Do not retry this call unchanged" in sent
+
+
+async def test_a_timeout_has_no_note(streaming_client) -> None:
+    client, container, fake = streaming_client
+    fake.add_tool_call("write_file", path="timeout.txt", content="x")
+    fake.add_text("ok")
+
+    async def _wait_then_cancel() -> int:
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            for session_id in container.approvals.active:
+                gate = container.approvals.get(session_id)
+                if gate and gate.pending:
+                    gate.cancel()
+                    return 1
+        return 0
+
+    task = asyncio.create_task(_wait_then_cancel())
+    response = await client.post("/chat", json={"message": "write it", "approval": "mutating"})
+    await task
+    assert response.status_code == 200
 
 
 async def test_proposals_are_announced_over_sse(streaming_client) -> None:
