@@ -163,10 +163,11 @@ class ShopScenario:
                         "runs from the same stdlib server, offline."
                     ),
                     calls=[
+                        # The page only: app.py already has the route, pointing
+                        # at the wrong place. That is act 3's bug, and it must
+                        # still be there when the user reports the 404.
                         ("write_file", {"path": "ui-2050.html", "content": self.page}),
                         ("write_file", {"path": "shop/test_ui.py", "content": self.test_ui}),
-                        # the page is new; the handler was written before it
-                        ("write_file", {"path": "shop/app.py", "content": self.served}),
                     ],
                 )
             self.stage = "ui"
@@ -228,7 +229,10 @@ class ShopScenario:
             log("handler read — patching the path")
             return Turn(
                 thinking="One path, one line: point the handler at the file that exists.",
-                calls=[("write_file", {"path": "shop/app.py", "content": self.fixed})],
+                # `served` is the version with both the sum and the page path
+                # right; `fixed` still carries the wrong path, and writing that
+                # here would re-introduce the very bug being fixed.
+                calls=[("write_file", {"path": "shop/app.py", "content": self.served})],
             )
 
         if self.stage == "serve_fixed" and tail["wrote_app"]:
