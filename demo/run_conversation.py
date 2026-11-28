@@ -142,16 +142,32 @@ class User:
         elif event == "error":
             self.write(f"\n\n**error:** {data.get('message') or data}\n")
 
+    @staticmethod
+    def _diff_preview(tool: str, arguments: dict[str, Any]) -> str:
+        """The lines a write_file proposal would add or remove, if it is a rewrite."""
+        if tool != "write_file" or not arguments.get("path", "").endswith((".py", ".html")):
+            return ""
+        target = HERE / "workspaces" / "shop" / str(arguments["path"])
+        if not target.exists():
+            return ""
+        before = target.read_text().splitlines()
+        after = str(arguments.get("content") or "").splitlines()
+        removed = [line for line in before if line not in after and line.strip()]
+        added = [line for line in after if line not in before and line.strip()]
+        shown = [f"- {line.strip()}" for line in removed] + [f"+ {line.strip()}" for line in added]
+        return "\n".join(shown[:8])
+
     def decide(self, client: httpx.Client, session: str, data: dict[str, Any]) -> None:
         tool = str(data.get("tool"))
         self.seen_tools[tool] = self.seen_tools.get(tool, 0) + 1
         decision, note = SCRIPT.get((self.seen_tools[tool], tool), ("approve", "Yes, that is correct."))
 
         arguments = data.get("arguments") or {}
-        detail = arguments.get("command") or arguments.get("path") or ""
-        self.write(
-            f"\n\n**→ {tool}** `{json.dumps(arguments)[:150]}`\n\n"
-        )
+        self.write(f"\n\n**→ {tool}** `{json.dumps(arguments)[:150]}`\n\n")
+        diff = self._diff_preview(tool, arguments)
+        if diff:
+            # The same lines the user would see in a diff view before deciding.
+            self.write("```diff\n" + diff + "\n```\n\n")
         verb = "approves" if decision == "approve" else "rejects"
         self.write(
             f"> the user: **{verb}** `{tool}` — risk {data.get('risk')}, "
@@ -166,8 +182,6 @@ class User:
             f"<sub>approve → ok={response.status_code == 200} "
             f"decision={decision} resolved={echoed.get('resolved')}</sub>\n"
         )
-        if not detail:
-            return
 
 
 PROMPT = """Build me a small shop API, then make its interface feel like it is from 2050.
